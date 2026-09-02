@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Журнал</string>
+    <string name="login_title">Вход в систему</string>
+    <string name="login_button">Войти через портал</string>
+    <string name="logout_button">Выйти</string>
+    <string name="classes_title">Классы</string>
+    <string name="lessons_title">Уроки</string>
+    <string name="journal_title">Журнал</string>
+    <string name="save">Сохранить</string>
+    <string name="cancel">Отмена</string>
+    <string name="loading">Загрузка…</string>
+    <string name="error_network">Ошибка сети</string>
+    <string name="error_auth">Ошибка авторизации</string>
+    <string name="present">Был</string>
+    <string name="absent">Не был</string>
+    <string name="late">Опоздал</string>
+    <string name="no_lessons">Нет уроков</string>
+    <string name="no_students">Нет учеников</string>
+    <string name="create_lesson">Создать урок</string>
+    <string name="marks_saved">Оценки сохранены</string>
+    <string name="remarks_saved">Замечания сохранены</string>
+    <string name="attendance_saved">Посещаемость сохранена</string>
+    <string name="topic_hint">Тема урока</string>
+    <string name="date_hint">Дата (ГГГГ-ММ-ДД)</string>
+    <string name="time_hint">Время (ЧЧ:ММ)</string>
+    <string name="remark_hint">Замечание…</string>
+    <string name="work_type_lesson">Урок</string>
+    <string name="work_type_homework">Домашнее задание</string>
+    <string name="select_class">Выберите класс</string>
+    <string name="select_subject">Выберите предмет</string>
+    <string name="new_remark">Новое замечание</string>
+    <string name="delete_remark">Удалить</string>
+    <string name="attendance">Посещаемость</string>
+    <string name="marks">Оценки</string>
+    <string name="remarks">Замечания</string>
+</resources>

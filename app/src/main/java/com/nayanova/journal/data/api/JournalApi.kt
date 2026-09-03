@@ -18,7 +18,8 @@ interface JournalApi {
     @GET("api/v1/lessons")
     suspend fun lessons(
         @Query("class_id") classId: Int = 0,
-        @Query("subject_id") subjectId: Int = 0
+        @Query("subject_id") subjectId: Int = 0,
+        @Query("date") date: String? = null
     ): Response<Map<String, List<Lesson>>>
 
     @GET("api/v1/lessons/{id}")
@@ -30,7 +31,7 @@ interface JournalApi {
     @POST("api/v1/lessons/{id}/marks")
     suspend fun marksSave(
         @Path("id") lessonId: Int,
-        @Body body: Map<String, Map<String, Map<String, MarkEntry>>>
+        @Body body: Map<String, Any>
     ): Response<Map<String, Boolean>>
 
     @POST("api/v1/lessons/{id}/remarks")
@@ -42,7 +43,13 @@ interface JournalApi {
     @POST("api/v1/lessons/{id}/attendance")
     suspend fun attendanceSave(
         @Path("id") lessonId: Int,
-        @Body body: Map<String, Map<String, AttendanceEntry>>
+        @Body body: Map<String, Any>
+    ): Response<Map<String, Boolean>>
+
+    @POST("api/v1/lessons/{id}/homework")
+    suspend fun homeworkSave(
+        @Path("id") lessonId: Int,
+        @Body body: Map<String, Any>
     ): Response<Map<String, Boolean>>
 
     @GET("api/v1/students")

@@ -25,6 +25,31 @@ class AuthViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
 
+    private val _hasSavedCredentials = MutableStateFlow(false)
+    val hasSavedCredentials = _hasSavedCredentials.asStateFlow()
+
+    private val _credentialsLoaded = MutableStateFlow(false)
+    val credentialsLoaded = _credentialsLoaded.asStateFlow()
+
+    private val _savedLogin = MutableStateFlow("")
+    val savedLogin = _savedLogin.asStateFlow()
+
+    private val _savedPassword = MutableStateFlow("")
+    val savedPassword = _savedPassword.asStateFlow()
+
+    init {
+        loadSavedCredentials()
+    }
+
+    private fun loadSavedCredentials() {
+        viewModelScope.launch {
+            _savedLogin.value = cookieStore.getSavedLogin()
+            _savedPassword.value = cookieStore.getSavedPassword()
+            _hasSavedCredentials.value = cookieStore.hasSavedCredentials()
+            _credentialsLoaded.value = true
+        }
+    }
+
     fun checkAuth() {
         viewModelScope.launch {
             _isLoading.value = true
@@ -43,10 +68,34 @@ class AuthViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Вызывается из потока WebView (JavascriptInterface) при ручном входе.
+     * Сохраняет учётные данные, если включена опция сохранения.
+     */
+    fun onManualCredentials(login: String, password: String, remember: Boolean) {
+        if (!remember) return
+        viewModelScope.launch {
+            cookieStore.saveCredentials(login, password)
+            _hasSavedCredentials.value = true
+            _savedLogin.value = login
+            _savedPassword.value = password
+        }
+    }
+
+    fun clearSavedCredentials() {
+        viewModelScope.launch {
+            cookieStore.clearCredentials()
+            _hasSavedCredentials.value = false
+            _savedLogin.value = ""
+            _savedPassword.value = ""
+        }
+    }
+
     fun logout() {
         viewModelScope.launch {
-            cookieStore.clear()
+            cookieStore.clearSession()
             _isLoggedIn.value = false
+            loadSavedCredentials()
         }
     }
 }

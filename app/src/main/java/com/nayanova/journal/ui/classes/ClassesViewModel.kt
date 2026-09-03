@@ -30,38 +30,55 @@ class ClassesViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
 
+    private val _subjectsLoading = MutableStateFlow<Set<Int>>(emptySet())
+    val subjectsLoading = _subjectsLoading.asStateFlow()
+
+    private val _subjectsError = MutableStateFlow<Map<Int, String>>(emptyMap())
+    val subjectsError = _subjectsError.asStateFlow()
+
     fun loadClasses() {
         viewModelScope.launch {
             _isLoading.value = true
             when (val result = repository.classes()) {
                 is JournalRepository.Result.Success -> {
                     _classes.value = result.data
-                    result.data.forEach { cls ->
-                        loadSubjects(cls.id)
-                    }
+                    _error.value = null
                 }
                 is JournalRepository.Result.Error -> {
-                    _error.value = result.message
+                    // Если список уже загружен, не заменяем его полноэкранной ошибкой.
+                    if (_classes.value.isEmpty()) {
+                        _error.value = result.message
+                    }
                 }
             }
             _isLoading.value = false
         }
     }
 
-    private fun loadSubjects(classId: Int) {
+    /**
+     * Загружает предметы класса лениво (при выборе класса).
+     * Уже загруженные предметы кэшируются; повторная загрузка — только по force.
+     */
+    fun loadSubjects(classId: Int, force: Boolean = false) {
+        if (!force && _subjects.value.containsKey(classId)) return
         viewModelScope.launch {
+            _subjectsLoading.value = _subjectsLoading.value + classId
+            _subjectsError.value = _subjectsError.value - classId
             when (val result = repository.classSubjects(classId)) {
                 is JournalRepository.Result.Success -> {
                     _subjects.value = _subjects.value + (classId to result.data)
                 }
-                is JournalRepository.Result.Error -> { /* ignore */ }
+                is JournalRepository.Result.Error -> {
+                    _subjectsError.value = _subjectsError.value + (classId to result.message)
+                }
             }
+            _subjectsLoading.value = _subjectsLoading.value - classId
         }
     }
 
     fun logout() {
         viewModelScope.launch {
-            cookieStore.clear()
+            cookieStore.clearSession()
         }
     }
 }

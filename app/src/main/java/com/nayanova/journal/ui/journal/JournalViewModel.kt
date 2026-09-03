@@ -15,16 +15,22 @@ class JournalViewModel @Inject constructor(
     private val repository: JournalRepository
 ) : ViewModel() {
 
+    /** Оценка в локальном состоянии: значение + за что (work_type) + комментарий. */
+    data class LocalMark(val value: Int, val workType: String, val comment: String = "")
+
     private val _detail = MutableStateFlow<LessonDetail?>(null)
     val detail = _detail.asStateFlow()
 
-    private val _localMarks = MutableStateFlow<Map<Int, Map<String, MarkEntry>>>(emptyMap())
+    // Несколько оценок за урок: список (значение + за что) на ученика
+    private val _localMarks = MutableStateFlow<Map<Int, List<LocalMark>>>(emptyMap())
     val localMarks = _localMarks.asStateFlow()
 
     private val _localAttendance = MutableStateFlow<Map<Int, AttendanceEntry>>(emptyMap())
     val localAttendance = _localAttendance.asStateFlow()
 
-    private val _localRemarks = MutableStateFlow<Map<Int, MutableList<String>>>(emptyMap())
+    // Важно: неизменяемые списки — иначе MutableStateFlow не увидит изменений
+    // при мутации одного и того же объекта (сравнение по содержимому).
+    private val _localRemarks = MutableStateFlow<Map<Int, List<String>>>(emptyMap())
     val localRemarks = _localRemarks.asStateFlow()
 
     private val _removeRemarkIds = MutableStateFlow<List<Int>>(emptyList())
@@ -52,84 +58,114 @@ class JournalViewModel @Inject constructor(
     }
 
     private fun initLocalState(detail: LessonDetail) {
-        val marks = mutableMapOf<Int, MutableMap<String, MarkEntry>>()
-        for ((studentId, byType) in detail.marks) {
+        val marks = mutableMapOf<Int, List<LocalMark>>()
+        for ((studentId, list) in detail.marks) {
             val sid = studentId.toIntOrNull() ?: continue
-            marks[sid] = mutableMapOf()
-            for ((workType, mark) in byType) {
-                marks[sid]!![workType] = MarkEntry(mark.value, mark.comment ?: "")
-            }
+            marks[sid] = list.map { LocalMark(it.value, it.workType.ifBlank { "Урок" }, it.comment ?: "") }
         }
         _localMarks.value = marks
 
         val att = mutableMapOf<Int, AttendanceEntry>()
         for ((studentId, record) in detail.attendance) {
             val sid = studentId.toIntOrNull() ?: continue
-            att[sid] = AttendanceEntry(record.status, record.comment ?: "")
+            att[sid] = AttendanceEntry(record.status, record.lateMinutes ?: 0)
         }
         _localAttendance.value = att
 
-        val remarks = mutableMapOf<Int, MutableList<String>>()
+        val remarks = mutableMapOf<Int, List<String>>()
         for ((studentId, remarkList) in detail.remarks) {
             val sid = studentId.toIntOrNull() ?: continue
-            remarks[sid] = remarkList.map { it.text }.toMutableList()
+            remarks[sid] = remarkList.map { it.text }
         }
         _localRemarks.value = remarks
     }
 
-    fun updateMark(studentId: Int, workType: String, value: Int) {
+    /** Добавить оценку (только 2–5) с указанием, за что она, и комментарием. */
+    fun addMark(studentId: Int, value: Int, workType: String, comment: String = "") {
+        if (value < 2 || value > 5) return
+        val type = workType.ifBlank { "Урок" }
         val current = _localMarks.value.toMutableMap()
-        val byType = (current[studentId] ?: mutableMapOf()).toMutableMap()
-        byType[workType] = MarkEntry(value, byType[workType]?.comment ?: "")
-        current[studentId] = byType
+        current[studentId] = (current[studentId] ?: emptyList()) + LocalMark(value, type, comment)
         _localMarks.value = current
     }
 
-    fun updateMarkComment(studentId: Int, workType: String, comment: String) {
+    /**
+     * Массовое добавление оценок: «за что» и комментарий вводятся один раз,
+     * значение оценки (2–5) выбрано для каждого ученика отдельно.
+     */
+    fun addMarkBulk(marks: List<Pair<Int, Int>>, workType: String, comment: String) {
+        if (marks.isEmpty()) return
+        val type = workType.ifBlank { "Урок" }
         val current = _localMarks.value.toMutableMap()
-        val byType = (current[studentId] ?: mutableMapOf()).toMutableMap()
-        byType[workType] = MarkEntry(byType[workType]?.value ?: 0, comment)
-        current[studentId] = byType
+        var added = 0
+        for ((sid, value) in marks) {
+            if (value < 2 || value > 5) continue
+            current[sid] = (current[sid] ?: emptyList()) + LocalMark(value, type, comment)
+            added++
+        }
+        _localMarks.value = current
+        _saveMessage.value = "Оценки добавлены: $added"
+    }
+
+    /** Удалить оценку по индексу. */
+    fun removeMark(studentId: Int, index: Int) {
+        val current = _localMarks.value.toMutableMap()
+        val list = current[studentId] ?: return
+        if (index >= list.size) return
+        current[studentId] = list.filterIndexed { i, _ -> i != index }
         _localMarks.value = current
     }
 
     fun updateAttendance(studentId: Int, status: String) {
         val current = _localAttendance.value.toMutableMap()
-        current[studentId] = AttendanceEntry(status, current[studentId]?.comment ?: "")
+        val prev = current[studentId] ?: AttendanceEntry()
+        current[studentId] = AttendanceEntry(status, prev.lateMinutes)
+        _localAttendance.value = current
+    }
+
+    /** Период опоздания в минутах (статус 'late'). */
+    fun updateLateMinutes(studentId: Int, minutes: Int) {
+        val current = _localAttendance.value.toMutableMap()
+        val prev = current[studentId] ?: AttendanceEntry(status = "late")
+        current[studentId] = prev.copy(lateMinutes = minutes.coerceIn(0, 999))
         _localAttendance.value = current
     }
 
     fun addRemark(studentId: Int, text: String) {
+        if (text.isBlank()) return
         val current = _localRemarks.value.toMutableMap()
-        val list = (current[studentId] ?: mutableListOf())
-        list.add(text)
-        current[studentId] = list
+        current[studentId] = (current[studentId] ?: emptyList()) + text.trim()
         _localRemarks.value = current
     }
 
     fun removeRemark(studentId: Int, index: Int) {
         val current = _localRemarks.value.toMutableMap()
-        val list = (current[studentId] ?: mutableListOf())
-        if (index < list.size) {
-            list.removeAt(index)
-        }
-        current[studentId] = list
+        val list = current[studentId] ?: return
+        if (index >= list.size) return
+        current[studentId] = list.filterIndexed { i, _ -> i != index }
         _localRemarks.value = current
     }
 
     fun saveMarks(lessonId: Int) {
         viewModelScope.launch {
-            val marksForApi = mutableMapOf<Int, MutableMap<String, MarkEntry>>()
-            for ((sid, byType) in _localMarks.value) {
-                marksForApi[sid] = mutableMapOf()
-                for ((wt, entry) in byType) {
-                    if (entry.value > 0) {
-                        marksForApi[sid]!![wt] = entry
-                    }
-                }
+            val marksForApi = _localMarks.value.mapValues { (_, list) ->
+                list.map { Triple(it.value, it.workType, it.comment) }
             }
             when (val result = repository.saveMarks(lessonId, marksForApi)) {
                 is JournalRepository.Result.Success -> _saveMessage.value = "Оценки сохранены"
+                is JournalRepository.Result.Error -> _saveMessage.value = result.message
+            }
+        }
+    }
+
+    /** Сохранить домашнее задание урока (на следующий урок) и обновить данные. */
+    fun saveHomework(lessonId: Int, title: String, description: String, dueDate: String) {
+        viewModelScope.launch {
+            when (val result = repository.saveHomework(lessonId, title, description, dueDate)) {
+                is JournalRepository.Result.Success -> {
+                    _saveMessage.value = "Домашнее задание сохранено"
+                    loadLesson(lessonId)
+                }
                 is JournalRepository.Result.Error -> _saveMessage.value = result.message
             }
         }

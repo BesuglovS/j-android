@@ -8,11 +8,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.nayanova.journal.ui.auth.LoginScreen
 import com.nayanova.journal.ui.classes.ClassesScreen
+import com.nayanova.journal.ui.day.DayScreen
 import com.nayanova.journal.ui.journal.JournalScreen
 import com.nayanova.journal.ui.lessons.LessonsScreen
 
 object Routes {
     const val LOGIN = "login"
+    const val DAY = "day"
     const val CLASSES = "classes"
     const val LESSONS = "lessons/{classId}/{subjectId}/{className}/{subjectName}"
     const val JOURNAL = "journal/{lessonId}"
@@ -30,8 +32,23 @@ fun NavGraph(navController: NavHostController) {
         composable(Routes.LOGIN) {
             LoginScreen(
                 onLoginSuccess = {
-                    navController.navigate(Routes.CLASSES) {
+                    navController.navigate(Routes.DAY) {
                         popUpTo(Routes.LOGIN) { inclusive = true }
+                    }
+                }
+            )
+        }
+        composable(Routes.DAY) {
+            DayScreen(
+                onLessonSelected = { lessonId ->
+                    navController.navigate(Routes.journal(lessonId))
+                },
+                onCreateLesson = {
+                    navController.navigate(Routes.CLASSES)
+                },
+                onLogout = {
+                    navController.navigate(Routes.LOGIN) {
+                        popUpTo(0) { inclusive = true }
                     }
                 }
             )
@@ -41,6 +58,7 @@ fun NavGraph(navController: NavHostController) {
                 onClassSelected = { classId, subjectId, className, subjectName ->
                     navController.navigate(Routes.lessons(classId, subjectId, className, subjectName))
                 },
+                onBack = { navController.popBackStack() },
                 onLogout = {
                     navController.navigate(Routes.LOGIN) {
                         popUpTo(0) { inclusive = true }

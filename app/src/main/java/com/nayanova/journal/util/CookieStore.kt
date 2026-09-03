@@ -30,6 +30,8 @@ class CookieStore @Inject constructor(
     companion object {
         private val COOKIE_KEY = stringPreferencesKey("auth_session")
         private val SERVER_URL_KEY = stringPreferencesKey("server_url")
+        private val LOGIN_KEY = stringPreferencesKey("saved_login")
+        private val PASSWORD_KEY = stringPreferencesKey("saved_password")
     }
 
     private val _cachedCookie = MutableStateFlow("")
@@ -59,8 +61,42 @@ class CookieStore @Inject constructor(
         return context.dataStore.data.map { it[SERVER_URL_KEY] ?: "https://j.nayanovaacademy.ru" }.first()
     }
 
-    suspend fun clear() {
-        context.dataStore.edit { it.clear() }
+    suspend fun saveCredentials(login: String, password: String) {
+        context.dataStore.edit {
+            it[LOGIN_KEY] = login
+            it[PASSWORD_KEY] = password
+        }
+    }
+
+    suspend fun getSavedLogin(): String {
+        return context.dataStore.data.map { it[LOGIN_KEY] ?: "" }.first()
+    }
+
+    suspend fun getSavedPassword(): String {
+        return context.dataStore.data.map { it[PASSWORD_KEY] ?: "" }.first()
+    }
+
+    suspend fun hasSavedCredentials(): Boolean {
+        val login = getSavedLogin()
+        val password = getSavedPassword()
+        return login.isNotEmpty() && password.isNotEmpty()
+    }
+
+    suspend fun clearCredentials() {
+        context.dataStore.edit {
+            it.remove(LOGIN_KEY)
+            it.remove(PASSWORD_KEY)
+        }
+    }
+
+    /**
+     * Очищает только сессию (куку). Сохранённые логин/пароль остаются,
+     * чтобы автоматический вход сработал при следующем запуске.
+     */
+    suspend fun clearSession() {
+        context.dataStore.edit {
+            it.remove(COOKIE_KEY)
+        }
     }
 
     suspend fun isLoggedIn(): Boolean {

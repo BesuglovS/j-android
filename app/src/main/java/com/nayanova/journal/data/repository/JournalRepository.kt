@@ -22,7 +22,7 @@ class JournalRepository @Inject constructor(
             if (response.isSuccessful) {
                 Result.Success(true)
             } else if (response.code() == 401) {
-                cookieStore.clear()
+                cookieStore.clearSession()
                 Result.Success(false)
             } else {
                 Result.Error("Ошибка авторизации", response.code())
@@ -71,6 +71,20 @@ class JournalRepository @Inject constructor(
         }
     }
 
+    /** Занятия на конкретную дату (формат ГГГГ-ММ-ДД). */
+    suspend fun lessonsByDate(date: String): Result<List<Lesson>> {
+        return try {
+            val response = api.lessons(date = date)
+            if (response.isSuccessful) {
+                Result.Success(response.body()?.get("lessons") ?: emptyList())
+            } else {
+                Result.Error("Ошибка загрузки занятий", response.code())
+            }
+        } catch (e: Exception) {
+            Result.Error(e.message ?: "Ошибка сети")
+        }
+    }
+
     suspend fun lessonDetail(lessonId: Int): Result<LessonDetail> {
         return try {
             val response = api.lessonDetail(lessonId)
@@ -109,13 +123,37 @@ class JournalRepository @Inject constructor(
         }
     }
 
-    suspend fun saveMarks(lessonId: Int, marks: Map<Int, Map<String, MarkEntry>>): Result<Boolean> {
+    /**
+     * Несколько оценок за урок с указанием работы и комментария:
+     * marks[studentId] = список троек (значение 2..5, за что, комментарий).
+     * Пустой список удаляет все оценки.
+     */
+    suspend fun saveMarks(lessonId: Int, marks: Map<Int, List<Triple<Int, String, String>>>): Result<Boolean> {
         return try {
-            @Suppress("UNCHECKED_CAST")
-            val body = mapOf("marks" to marks) as Map<String, Any>
-            val response = api.marksSave(lessonId, body as Map<String, Map<String, Map<String, MarkEntry>>>)
+            val body = mapOf("marks" to marks.mapValues { (_, entries) ->
+                entries.filter { (value, _, _) -> value in 2..5 }.map { (value, workType, comment) ->
+                    mapOf("value" to value, "work_type" to workType, "comment" to comment)
+                }
+            })
+            val response = api.marksSave(lessonId, body)
             if (response.isSuccessful) Result.Success(true)
             else Result.Error("Ошибка сохранения оценок", response.code())
+        } catch (e: Exception) {
+            Result.Error(e.message ?: "Ошибка сети")
+        }
+    }
+
+    /** Домашнее задание урока (на следующий урок). */
+    suspend fun saveHomework(lessonId: Int, title: String, description: String, dueDate: String): Result<Boolean> {
+        return try {
+            val body = mapOf(
+                "title" to title,
+                "description" to description,
+                "due_date" to dueDate
+            )
+            val response = api.homeworkSave(lessonId, body)
+            if (response.isSuccessful) Result.Success(true)
+            else Result.Error("Ошибка сохранения домашнего задания", response.code())
         } catch (e: Exception) {
             Result.Error(e.message ?: "Ошибка сети")
         }
@@ -135,9 +173,15 @@ class JournalRepository @Inject constructor(
 
     suspend fun saveAttendance(lessonId: Int, attendance: Map<Int, AttendanceEntry>): Result<Boolean> {
         return try {
-            @Suppress("UNCHECKED_CAST")
-            val body = mapOf("attendance" to attendance) as Map<String, Any>
-            val response = api.attendanceSave(lessonId, body as Map<String, Map<String, AttendanceEntry>>)
+            val body = mapOf("attendance" to attendance.mapValues { (_, entry) ->
+                buildMap<String, Any> {
+                    put("status", entry.status)
+                    if (entry.status == "late" && entry.lateMinutes > 0) {
+                        put("late_minutes", entry.lateMinutes)
+                    }
+                }
+            })
+            val response = api.attendanceSave(lessonId, body)
             if (response.isSuccessful) Result.Success(true)
             else Result.Error("Ошибка сохранения посещаемости", response.code())
         } catch (e: Exception) {

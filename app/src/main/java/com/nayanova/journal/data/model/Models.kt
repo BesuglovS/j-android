@@ -70,6 +70,7 @@ data class AttendanceRecord(
     @SerializedName("lesson_id") val lessonId: Int,
     val status: String,
     val comment: String?,
+    @SerializedName("late_minutes") val lateMinutes: Int? = null,
     @SerializedName("created_at") val createdAt: String?
 )
 
@@ -91,18 +92,19 @@ data class Quarter(
 data class LessonDetail(
     val lesson: Lesson,
     val students: List<Student>,
-    val marks: Map<String, Map<String, Mark>>,
+    // Несколько оценок за урок: список оценок на ученика
+    val marks: Map<String, List<Mark>>,
     val remarks: Map<String, List<Remark>>,
     val attendance: Map<String, AttendanceRecord>,
-    val homeworks: List<Homework>
-)
-
-data class MarkEntry(
-    val value: Int = 0,
-    val comment: String = ""
+    val homeworks: List<Homework>,
+    // ДЗ, заданное на текущем уроке (на следующий урок)
+    val homework: Homework? = null,
+    // ДЗ с предыдущего урока (тот же класс и предмет), если задано
+    @SerializedName("previous_homework") val previousHomework: Homework? = null,
+    @SerializedName("previous_lesson_date") val previousLessonDate: String? = null
 )
 
 data class AttendanceEntry(
     val status: String = "present",
-    val comment: String = ""
+    val lateMinutes: Int = 0
 )

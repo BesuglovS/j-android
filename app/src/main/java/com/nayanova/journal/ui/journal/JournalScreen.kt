@@ -55,6 +55,7 @@ fun markColor(value: Int): Color = when (value) {
 fun JournalScreen(
     lessonId: Int,
     onBack: () -> Unit,
+    onClassJournal: (Int, Int, String, String) -> Unit,
     viewModel: JournalViewModel = hiltViewModel()
 ) {
     val detail by viewModel.detail.collectAsState()
@@ -110,6 +111,13 @@ fun JournalScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
                 ),
                 actions = {
+                    detail?.lesson?.let { lesson ->
+                        IconButton(onClick = {
+                            onClassJournal(lesson.classId, lesson.subjectId, lesson.className ?: "", lesson.subjectName ?: "")
+                        }) {
+                            Icon(Icons.Default.TableChart, "Журнал класса", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
+                    }
                     IconButton(onClick = { showHomeworkDialog = true }) {
                         Icon(Icons.Default.HomeWork, "Домашнее задание", tint = MaterialTheme.colorScheme.onPrimary)
                     }
@@ -170,7 +178,7 @@ fun JournalGrid(
     students: List<Student>,
     localMarks: Map<Int, List<JournalViewModel.LocalMark>>,
     localAttendance: Map<Int, com.nayanova.journal.data.model.AttendanceEntry>,
-    localRemarks: Map<Int, List<String>>,
+    localRemarks: Map<Int, List<JournalViewModel.RemarkRef>>,
     hasPreviousHomework: Boolean,
     previousHomework: com.nayanova.journal.data.model.Homework?,
     onAddMark: (Int, Int, String, String) -> Unit,
@@ -373,7 +381,7 @@ fun JournalGrid(
                         )
 
                         // Замечания
-                        val remarks = localRemarks[student.id] ?: emptyList()
+                        val remarks = (localRemarks[student.id] ?: emptyList()).map { it.text }
                         Box(
                             modifier = Modifier
                                 .width(120.dp)
@@ -403,7 +411,7 @@ fun JournalGrid(
 
                         // Телефон (замечание об использовании телефона)
                         val hasPhoneRemark = (localRemarks[student.id] ?: emptyList()).any {
-                            it.contains("телефон", ignoreCase = true)
+                            it.text.contains("телефон", ignoreCase = true)
                         }
                         Box(
                             modifier = Modifier
@@ -484,7 +492,7 @@ fun JournalGrid(
     if (showRemarkDialog && selectedStudentId != null) {
         RemarkDialog(
             studentName = studentName(students, selectedStudentId),
-            remarks = localRemarks[selectedStudentId] ?: emptyList(),
+            remarks = (localRemarks[selectedStudentId] ?: emptyList()).map { it.text },
             onAdd = { text ->
                 onAddRemark(selectedStudentId!!, text)
             },

@@ -21,3 +21,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Temporary build outputs
+build_out.txt

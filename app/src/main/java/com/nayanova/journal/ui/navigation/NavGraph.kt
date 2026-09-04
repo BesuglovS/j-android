@@ -8,6 +8,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.nayanova.journal.ui.auth.LoginScreen
 import com.nayanova.journal.ui.classes.ClassesScreen
+import com.nayanova.journal.ui.classjournal.ClassJournalScreen
 import com.nayanova.journal.ui.day.DayScreen
 import com.nayanova.journal.ui.journal.JournalScreen
 import com.nayanova.journal.ui.lessons.LessonsScreen
@@ -18,12 +19,17 @@ object Routes {
     const val CLASSES = "classes"
     const val LESSONS = "lessons/{classId}/{subjectId}/{className}/{subjectName}"
     const val JOURNAL = "journal/{lessonId}"
+    const val CLASS_JOURNAL = "class-journal/{classId}/{subjectId}/{className}/{subjectName}"
 
     fun lessons(classId: Int, subjectId: Int, className: String, subjectName: String): String {
         return "lessons/$classId/$subjectId/${java.net.URLEncoder.encode(className, "UTF-8")}/${java.net.URLEncoder.encode(subjectName, "UTF-8")}"
     }
 
     fun journal(lessonId: Int): String = "journal/$lessonId"
+
+    fun classJournal(classId: Int, subjectId: Int, className: String, subjectName: String): String {
+        return "class-journal/$classId/$subjectId/${java.net.URLEncoder.encode(className, "UTF-8")}/${java.net.URLEncoder.encode(subjectName, "UTF-8")}"
+    }
 }
 
 @Composable
@@ -87,6 +93,9 @@ fun NavGraph(navController: NavHostController) {
                 onLessonSelected = { lessonId ->
                     navController.navigate(Routes.journal(lessonId))
                 },
+                onClassJournal = {
+                    navController.navigate(Routes.classJournal(classId, subjectId, className, subjectName))
+                },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -97,6 +106,33 @@ fun NavGraph(navController: NavHostController) {
             val lessonId = backStackEntry.arguments?.getInt("lessonId") ?: 0
             JournalScreen(
                 lessonId = lessonId,
+                onBack = { navController.popBackStack() },
+                onClassJournal = { classId, subjectId, className, subjectName ->
+                    navController.navigate(Routes.classJournal(classId, subjectId, className, subjectName))
+                }
+            )
+        }
+        composable(
+            Routes.CLASS_JOURNAL,
+            arguments = listOf(
+                navArgument("classId") { type = NavType.IntType },
+                navArgument("subjectId") { type = NavType.IntType },
+                navArgument("className") { type = NavType.StringType },
+                navArgument("subjectName") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val classId = backStackEntry.arguments?.getInt("classId") ?: 0
+            val subjectId = backStackEntry.arguments?.getInt("subjectId") ?: 0
+            val className = backStackEntry.arguments?.getString("className") ?: ""
+            val subjectName = backStackEntry.arguments?.getString("subjectName") ?: ""
+            ClassJournalScreen(
+                classId = classId,
+                subjectId = subjectId,
+                className = className,
+                subjectName = subjectName,
+                onLessonSelected = { lessonId ->
+                    navController.navigate(Routes.journal(lessonId))
+                },
                 onBack = { navController.popBackStack() }
             )
         }

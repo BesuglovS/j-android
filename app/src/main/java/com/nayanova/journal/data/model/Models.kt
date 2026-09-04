@@ -108,3 +108,10 @@ data class AttendanceEntry(
     val status: String = "present",
     val lateMinutes: Int = 0
 )
+
+data class ClassJournalData(
+    val lessons: List<Lesson>,
+    val students: List<Student>,
+    val marks: Map<String, Map<String, List<Mark>>>,
+    val attendance: Map<String, Map<String, AttendanceEntry>>
+)

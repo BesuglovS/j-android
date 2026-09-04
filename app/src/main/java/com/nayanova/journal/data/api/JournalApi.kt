@@ -69,4 +69,10 @@ interface JournalApi {
         @Query("quarter_id") quarterId: Int = 0,
         @Query("subject_id") subjectId: Int = 0
     ): Response<Map<String, Any>>
+
+    @GET("api/v1/class-journal")
+    suspend fun classJournal(
+        @Query("class_id") classId: Int,
+        @Query("subject_id") subjectId: Int
+    ): Response<ClassJournalData>
 }

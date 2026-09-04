@@ -228,4 +228,22 @@ class JournalRepository @Inject constructor(
             Result.Error(e.message ?: "Ошибка сети")
         }
     }
+
+    suspend fun classJournal(classId: Int, subjectId: Int): Result<ClassJournalData> {
+        return try {
+            val response = api.classJournal(classId, subjectId)
+            if (response.isSuccessful) {
+                val data = response.body()
+                if (data != null) {
+                    Result.Success(data)
+                } else {
+                    Result.Error("Пустой ответ")
+                }
+            } else {
+                Result.Error("Ошибка загрузки журнала", response.code())
+            }
+        } catch (e: Exception) {
+            Result.Error(e.message ?: "Ошибка сети")
+        }
+    }
 }

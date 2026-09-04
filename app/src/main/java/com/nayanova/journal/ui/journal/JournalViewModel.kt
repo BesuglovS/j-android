@@ -18,6 +18,9 @@ class JournalViewModel @Inject constructor(
     /** Оценка в локальном состоянии: значение + за что (work_type) + комментарий. */
     data class LocalMark(val value: Int, val workType: String, val comment: String = "")
 
+    /** Замечание в локальном состоянии: id (0 — новое, ещё не отправленное) + текст. */
+    data class RemarkRef(val id: Int, val text: String)
+
     private var currentLessonId: Int = 0
 
     private val _detail = MutableStateFlow<LessonDetail?>(null)
@@ -32,7 +35,7 @@ class JournalViewModel @Inject constructor(
 
     // Важно: неизменяемые списки — иначе MutableStateFlow не увидит изменений
     // при мутации одного и того же объекта (сравнение по содержимому).
-    private val _localRemarks = MutableStateFlow<Map<Int, List<String>>>(emptyMap())
+    private val _localRemarks = MutableStateFlow<Map<Int, List<RemarkRef>>>(emptyMap())
     val localRemarks = _localRemarks.asStateFlow()
 
     private val _removeRemarkIds = MutableStateFlow<List<Int>>(emptyList())
@@ -75,10 +78,10 @@ class JournalViewModel @Inject constructor(
         }
         _localAttendance.value = att
 
-        val remarks = mutableMapOf<Int, List<String>>()
+        val remarks = mutableMapOf<Int, List<RemarkRef>>()
         for ((studentId, remarkList) in detail.remarks) {
             val sid = studentId.toIntOrNull() ?: continue
-            remarks[sid] = remarkList.map { it.text }
+            remarks[sid] = remarkList.map { RemarkRef(it.id, it.text) }
         }
         _localRemarks.value = remarks
     }
@@ -142,7 +145,7 @@ class JournalViewModel @Inject constructor(
     fun addRemark(studentId: Int, text: String) {
         if (text.isBlank()) return
         val current = _localRemarks.value.toMutableMap()
-        current[studentId] = (current[studentId] ?: emptyList()) + text.trim()
+        current[studentId] = (current[studentId] ?: emptyList()) + RemarkRef(0, text.trim())
         _localRemarks.value = current
         autoSaveRemarks()
     }
@@ -151,6 +154,10 @@ class JournalViewModel @Inject constructor(
         val current = _localRemarks.value.toMutableMap()
         val list = current[studentId] ?: return
         if (index >= list.size) return
+        val removed = list[index]
+        if (removed.id > 0) {
+            _removeRemarkIds.value = _removeRemarkIds.value + removed.id
+        }
         current[studentId] = list.filterIndexed { i, _ -> i != index }
         _localRemarks.value = current
         autoSaveRemarks()
@@ -180,8 +187,8 @@ class JournalViewModel @Inject constructor(
         if (lessonId == 0) return
         viewModelScope.launch {
             val remarksForApi = mutableMapOf<Int, List<String>>()
-            for ((sid, texts) in _localRemarks.value) {
-                remarksForApi[sid] = texts.filter { it.isNotBlank() }
+            for ((sid, refs) in _localRemarks.value) {
+                remarksForApi[sid] = refs.map { it.text }.filter { it.isNotBlank() }
             }
             repository.saveRemarks(lessonId, remarksForApi, _removeRemarkIds.value)
         }
@@ -224,8 +231,8 @@ class JournalViewModel @Inject constructor(
     fun saveRemarks(lessonId: Int) {
         viewModelScope.launch {
             val remarksForApi = mutableMapOf<Int, List<String>>()
-            for ((sid, texts) in _localRemarks.value) {
-                remarksForApi[sid] = texts.filter { it.isNotBlank() }
+            for ((sid, refs) in _localRemarks.value) {
+                remarksForApi[sid] = refs.map { it.text }.filter { it.isNotBlank() }
             }
             when (val result = repository.saveRemarks(lessonId, remarksForApi, _removeRemarkIds.value)) {
                 is JournalRepository.Result.Success -> _saveMessage.value = "Замечания сохранены"

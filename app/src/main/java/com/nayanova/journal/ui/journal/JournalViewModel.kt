@@ -18,6 +18,8 @@ class JournalViewModel @Inject constructor(
     /** Оценка в локальном состоянии: значение + за что (work_type) + комментарий. */
     data class LocalMark(val value: Int, val workType: String, val comment: String = "")
 
+    private var currentLessonId: Int = 0
+
     private val _detail = MutableStateFlow<LessonDetail?>(null)
     val detail = _detail.asStateFlow()
 
@@ -42,6 +44,7 @@ class JournalViewModel @Inject constructor(
     val saveMessage = _saveMessage.asStateFlow()
 
     fun loadLesson(lessonId: Int) {
+        currentLessonId = lessonId
         viewModelScope.launch {
             _isLoading.value = true
             when (val result = repository.lessonDetail(lessonId)) {
@@ -87,6 +90,7 @@ class JournalViewModel @Inject constructor(
         val current = _localMarks.value.toMutableMap()
         current[studentId] = (current[studentId] ?: emptyList()) + LocalMark(value, type, comment)
         _localMarks.value = current
+        autoSaveMarks()
     }
 
     /**
@@ -105,6 +109,7 @@ class JournalViewModel @Inject constructor(
         }
         _localMarks.value = current
         _saveMessage.value = "Оценки добавлены: $added"
+        autoSaveMarks()
     }
 
     /** Удалить оценку по индексу. */
@@ -114,6 +119,7 @@ class JournalViewModel @Inject constructor(
         if (index >= list.size) return
         current[studentId] = list.filterIndexed { i, _ -> i != index }
         _localMarks.value = current
+        autoSaveMarks()
     }
 
     fun updateAttendance(studentId: Int, status: String) {
@@ -121,6 +127,7 @@ class JournalViewModel @Inject constructor(
         val prev = current[studentId] ?: AttendanceEntry()
         current[studentId] = AttendanceEntry(status, prev.lateMinutes)
         _localAttendance.value = current
+        autoSaveAttendance()
     }
 
     /** Период опоздания в минутах (статус 'late'). */
@@ -129,6 +136,7 @@ class JournalViewModel @Inject constructor(
         val prev = current[studentId] ?: AttendanceEntry(status = "late")
         current[studentId] = prev.copy(lateMinutes = minutes.coerceIn(0, 999))
         _localAttendance.value = current
+        autoSaveAttendance()
     }
 
     fun addRemark(studentId: Int, text: String) {
@@ -136,6 +144,7 @@ class JournalViewModel @Inject constructor(
         val current = _localRemarks.value.toMutableMap()
         current[studentId] = (current[studentId] ?: emptyList()) + text.trim()
         _localRemarks.value = current
+        autoSaveRemarks()
     }
 
     fun removeRemark(studentId: Int, index: Int) {
@@ -144,6 +153,38 @@ class JournalViewModel @Inject constructor(
         if (index >= list.size) return
         current[studentId] = list.filterIndexed { i, _ -> i != index }
         _localRemarks.value = current
+        autoSaveRemarks()
+    }
+
+    private fun autoSaveMarks() {
+        val lessonId = currentLessonId
+        if (lessonId == 0) return
+        viewModelScope.launch {
+            val marksForApi = _localMarks.value.mapValues { (_, list) ->
+                list.map { Triple(it.value, it.workType, it.comment) }
+            }
+            repository.saveMarks(lessonId, marksForApi)
+        }
+    }
+
+    private fun autoSaveAttendance() {
+        val lessonId = currentLessonId
+        if (lessonId == 0) return
+        viewModelScope.launch {
+            repository.saveAttendance(lessonId, _localAttendance.value)
+        }
+    }
+
+    private fun autoSaveRemarks() {
+        val lessonId = currentLessonId
+        if (lessonId == 0) return
+        viewModelScope.launch {
+            val remarksForApi = mutableMapOf<Int, List<String>>()
+            for ((sid, texts) in _localRemarks.value) {
+                remarksForApi[sid] = texts.filter { it.isNotBlank() }
+            }
+            repository.saveRemarks(lessonId, remarksForApi, _removeRemarkIds.value)
+        }
     }
 
     fun saveMarks(lessonId: Int) {
@@ -188,6 +229,18 @@ class JournalViewModel @Inject constructor(
             }
             when (val result = repository.saveRemarks(lessonId, remarksForApi, _removeRemarkIds.value)) {
                 is JournalRepository.Result.Success -> _saveMessage.value = "Замечания сохранены"
+                is JournalRepository.Result.Error -> _saveMessage.value = result.message
+            }
+        }
+    }
+
+    fun deleteHomework(homeworkId: Int, lessonId: Int) {
+        viewModelScope.launch {
+            when (val result = repository.deleteHomework(homeworkId)) {
+                is JournalRepository.Result.Success -> {
+                    _saveMessage.value = "Домашнее задание удалено"
+                    loadLesson(lessonId)
+                }
                 is JournalRepository.Result.Error -> _saveMessage.value = result.message
             }
         }

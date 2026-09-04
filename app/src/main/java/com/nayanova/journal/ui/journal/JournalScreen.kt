@@ -113,15 +113,6 @@ fun JournalScreen(
                     IconButton(onClick = { showHomeworkDialog = true }) {
                         Icon(Icons.Default.HomeWork, "Домашнее задание", tint = MaterialTheme.colorScheme.onPrimary)
                     }
-                    IconButton(onClick = { viewModel.saveMarks(lessonId) }) {
-                        Icon(Icons.Default.Grade, "Сохранить оценки", tint = MaterialTheme.colorScheme.onPrimary)
-                    }
-                    IconButton(onClick = { viewModel.saveAttendance(lessonId) }) {
-                        Icon(Icons.Default.CheckCircle, "Сохранить посещаемость", tint = MaterialTheme.colorScheme.onPrimary)
-                    }
-                    IconButton(onClick = { viewModel.saveRemarks(lessonId) }) {
-                        Icon(Icons.Default.Comment, "Сохранить замечания", tint = MaterialTheme.colorScheme.onPrimary)
-                    }
                 }
             )
         }
@@ -143,6 +134,7 @@ fun JournalScreen(
                     localAttendance = localAttendance,
                     localRemarks = localRemarks,
                     hasPreviousHomework = detail?.previousHomework != null,
+                    previousHomework = detail?.previousHomework,
                     onAddMark = { sid, v, wt, c -> viewModel.addMark(sid, v, wt, c) },
                     onAddMarkBulk = { marks, wt, c -> viewModel.addMarkBulk(marks, wt, c) },
                     onRemoveMark = { sid, i -> viewModel.removeMark(sid, i) },
@@ -165,6 +157,9 @@ fun JournalScreen(
                 showHomeworkDialog = false
                 viewModel.saveHomework(lessonId, title, description, dueDate)
             },
+            onDelete = detail?.homework?.let { hw ->
+                { viewModel.deleteHomework(hw.id, lessonId) }
+            },
             onDismiss = { showHomeworkDialog = false }
         )
     }
@@ -177,6 +172,7 @@ fun JournalGrid(
     localAttendance: Map<Int, com.nayanova.journal.data.model.AttendanceEntry>,
     localRemarks: Map<Int, List<String>>,
     hasPreviousHomework: Boolean,
+    previousHomework: com.nayanova.journal.data.model.Homework?,
     onAddMark: (Int, Int, String, String) -> Unit,
     onAddMarkBulk: (List<Pair<Int, Int>>, String, String) -> Unit,
     onRemoveMark: (Int, Int) -> Unit,
@@ -190,6 +186,7 @@ fun JournalGrid(
     var showRemarkDialog by remember { mutableStateOf(false) }
     var showMarkDialog by remember { mutableStateOf(false) }
     var showBulkMarkDialog by remember { mutableStateOf(false) }
+    var showHomeworkInfoDialog by remember { mutableStateOf(false) }
     // null — выбор «за что» в диалоге; "ДЗ" — фиксируется колонкой ДЗ
     var markDialogWorkType by remember { mutableStateOf<String?>(null) }
     var lateDialogStudentId by remember { mutableStateOf<Int?>(null) }
@@ -238,10 +235,25 @@ fun JournalGrid(
                         }
                     }
                     if (hasPreviousHomework) {
-                        TableCell("ДЗ (прошл. урок)", 90.dp, 40.dp, Alignment.Center, 9.sp)
+                        Box(
+                            modifier = Modifier
+                                .width(90.dp)
+                                .height(40.dp)
+                                .padding(4.dp)
+                                .clickable { showHomeworkInfoDialog = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "ДЗ (прошл. урок)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 9.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                     TableCell("Посещ.", 110.dp, 40.dp, Alignment.Center, 11.sp)
                     TableCell("Замечания", 120.dp, 40.dp, Alignment.Center, 11.sp)
+                    TableCell("Телефон", 80.dp, 40.dp, Alignment.Center, 11.sp)
                 }
 
                 // Строки учеников
@@ -388,6 +400,42 @@ fun JournalGrid(
                                 )
                             }
                         }
+
+                        // Телефон (замечание об использовании телефона)
+                        val hasPhoneRemark = (localRemarks[student.id] ?: emptyList()).any {
+                            it.contains("телефон", ignoreCase = true)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .width(80.dp)
+                                .height(48.dp)
+                                .padding(2.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(
+                                    if (hasPhoneRemark) Color(0xFFFFEBEE)
+                                    else Color.Transparent
+                                )
+                                .border(
+                                    0.5.dp,
+                                    if (hasPhoneRemark) Color(0xFFE53935).copy(alpha = 0.6f)
+                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                    RoundedCornerShape(4.dp)
+                                )
+                                .clickable {
+                                    if (!hasPhoneRemark) {
+                                        onAddRemark(student.id, "Использование телефона на уроке")
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Phone,
+                                contentDescription = "Телефон",
+                                tint = if (hasPhoneRemark) Color(0xFFE53935)
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -444,6 +492,14 @@ fun JournalGrid(
                 onRemoveRemark(selectedStudentId!!, index)
             },
             onDismiss = { showRemarkDialog = false; selectedStudentId = null }
+        )
+    }
+
+    // Диалог информации о домашнем задании
+    if (showHomeworkInfoDialog) {
+        HomeworkInfoDialog(
+            homework = previousHomework,
+            onDismiss = { showHomeworkInfoDialog = false }
         )
     }
 }
@@ -828,11 +884,13 @@ fun BulkMarkDialog(
 fun HomeworkDialog(
     existing: com.nayanova.journal.data.model.Homework?,
     onSave: (title: String, description: String, dueDate: String) -> Unit,
+    onDelete: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     var title by remember { mutableStateOf(existing?.title ?: "") }
     var description by remember { mutableStateOf(existing?.description ?: "") }
     var dueDate by remember { mutableStateOf(existing?.dueDate ?: "") }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     val canSave = title.isNotBlank() || description.isNotBlank()
 
     AlertDialog(
@@ -869,16 +927,91 @@ fun HomeworkDialog(
             }
         },
         confirmButton = {
-            Button(
-                enabled = canSave,
-                onClick = { onSave(title.trim(), description.trim(), dueDate.trim()) }
-            ) {
-                Text("Сохранить")
+            Row {
+                if (existing != null && onDelete != null) {
+                    TextButton(
+                        onClick = { showDeleteConfirm = true },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("Удалить")
+                    }
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                Button(
+                    enabled = canSave,
+                    onClick = { onSave(title.trim(), description.trim(), dueDate.trim()) }
+                ) {
+                    Text("Сохранить")
+                }
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text("Отмена")
+            }
+        }
+    )
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Удалить задание?") },
+            text = { Text("Оценки за это задание также будут удалены.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteConfirm = false
+                    onDismiss()
+                    onDelete?.invoke()
+                }) {
+                    Text("Удалить", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Отмена")
+                }
+            }
+        )
+    }
+}
+
+/**
+ * Диалог для отображения информации о домашнем задании (только чтение).
+ */
+@Composable
+fun HomeworkInfoDialog(
+    homework: com.nayanova.journal.data.model.Homework?,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Домашнее задание") },
+        text = {
+            if (homework == null) {
+                Text("Домашнее задание не задано", fontSize = 14.sp)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!homework.title.isNullOrBlank()) {
+                        Text(homework.title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                    if (!homework.description.isNullOrBlank()) {
+                        Text(homework.description, fontSize = 14.sp)
+                    }
+                    if (!homework.dueDate.isNullOrBlank()) {
+                        Text(
+                            "Срок сдачи: ${homework.dueDate}",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Закрыть")
             }
         }
     )

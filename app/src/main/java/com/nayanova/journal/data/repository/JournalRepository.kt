@@ -105,11 +105,11 @@ class JournalRepository @Inject constructor(
 
     suspend fun createLesson(classId: Int, subjectId: Int, date: String, startTime: String = "", topic: String = ""): Result<Int> {
         return try {
-            val body = mutableMapOf<String, Any>(
-                "class_id" to classId,
-                "subject_id" to subjectId,
-                "date" to date
-            )
+            val body = HashMap<String, Any>().apply {
+                put("class_id", classId)
+                put("subject_id", subjectId)
+                put("date", date)
+            }
             if (startTime.isNotEmpty()) body["start_time"] = startTime
             if (topic.isNotEmpty()) body["topic"] = topic
             val response = api.lessonCreate(body)
@@ -130,11 +130,12 @@ class JournalRepository @Inject constructor(
      */
     suspend fun saveMarks(lessonId: Int, marks: Map<Int, List<Triple<Int, String, String>>>): Result<Boolean> {
         return try {
-            val body = mapOf("marks" to marks.mapValues { (_, entries) ->
+            val body = HashMap<String, Any>()
+            body["marks"] = marks.mapValues { (_, entries) ->
                 entries.filter { (value, _, _) -> value in 2..5 }.map { (value, workType, comment) ->
                     mapOf("value" to value, "work_type" to workType, "comment" to comment)
                 }
-            })
+            }
             val response = api.marksSave(lessonId, body)
             if (response.isSuccessful) Result.Success(true)
             else Result.Error("Ошибка сохранения оценок", response.code())
@@ -146,11 +147,11 @@ class JournalRepository @Inject constructor(
     /** Домашнее задание урока (на следующий урок). */
     suspend fun saveHomework(lessonId: Int, title: String, description: String, dueDate: String): Result<Boolean> {
         return try {
-            val body = mapOf(
-                "title" to title,
-                "description" to description,
-                "due_date" to dueDate
-            )
+            val body = HashMap<String, Any>().apply {
+                put("title", title)
+                put("description", description)
+                put("due_date", dueDate)
+            }
             val response = api.homeworkSave(lessonId, body)
             if (response.isSuccessful) Result.Success(true)
             else Result.Error("Ошибка сохранения домашнего задания", response.code())
@@ -159,9 +160,21 @@ class JournalRepository @Inject constructor(
         }
     }
 
+    /** Удалить домашнее задание и связанные оценки (work_type = 'ДЗ'). */
+    suspend fun deleteHomework(homeworkId: Int): Result<Boolean> {
+        return try {
+            val response = api.homeworkDelete(homeworkId)
+            if (response.isSuccessful) Result.Success(true)
+            else Result.Error("Ошибка удаления домашнего задания", response.code())
+        } catch (e: Exception) {
+            Result.Error(e.message ?: "Ошибка сети")
+        }
+    }
+
     suspend fun saveRemarks(lessonId: Int, remarks: Map<Int, List<String>>, removeIds: List<Int> = emptyList()): Result<Boolean> {
         return try {
-            val body = mutableMapOf<String, Any>("remarks" to remarks)
+            val body = HashMap<String, Any>()
+            body["remarks"] = remarks
             if (removeIds.isNotEmpty()) body["remove_ids"] = removeIds
             val response = api.remarksSave(lessonId, body)
             if (response.isSuccessful) Result.Success(true)
@@ -173,14 +186,15 @@ class JournalRepository @Inject constructor(
 
     suspend fun saveAttendance(lessonId: Int, attendance: Map<Int, AttendanceEntry>): Result<Boolean> {
         return try {
-            val body = mapOf("attendance" to attendance.mapValues { (_, entry) ->
+            val body = HashMap<String, Any>()
+            body["attendance"] = attendance.mapValues { (_, entry) ->
                 buildMap<String, Any> {
                     put("status", entry.status)
                     if (entry.status == "late" && entry.lateMinutes > 0) {
                         put("late_minutes", entry.lateMinutes)
                     }
                 }
-            })
+            }
             val response = api.attendanceSave(lessonId, body)
             if (response.isSuccessful) Result.Success(true)
             else Result.Error("Ошибка сохранения посещаемости", response.code())

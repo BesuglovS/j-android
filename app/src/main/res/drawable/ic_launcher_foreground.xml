@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Корешок журнала -->
+    <path
+        android:fillColor="#FF1565C0"
+        android:pathData="M33,33 A4,4 0 0 1 37,29 A4,4 0 0 1 41,33 L41,75 A4,4 0 0 1 37,79 A4,4 0 0 1 33,75 Z" />
+
+    <!-- Страница -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M37,34 A5,5 0 0 1 42,29 L70,29 A5,5 0 0 1 75,34 L75,74 A5,5 0 0 1 70,79 L42,79 A5,5 0 0 1 37,74 Z" />
+
+    <!-- Строки записей -->
+    <path
+        android:fillColor="#FFBBDEFB"
+        android:pathData="M44.8,40 L67.2,40 A1.8,1.8 0 0 1 67.2,43.6 L44.8,43.6 A1.8,1.8 0 0 1 44.8,40 Z" />
+    <path
+        android:fillColor="#FFBBDEFB"
+        android:pathData="M44.8,49 L60.2,49 A1.8,1.8 0 0 1 60.2,52.6 L44.8,52.6 A1.8,1.8 0 0 1 44.8,49 Z" />
+    <path
+        android:fillColor="#FFBBDEFB"
+        android:pathData="M44.8,58 L63.2,58 A1.8,1.8 0 0 1 63.2,61.6 L44.8,61.6 A1.8,1.8 0 0 1 44.8,58 Z" />
+
+    <!-- Зелёный бейдж с белой обводкой -->
+    <path
+        android:fillColor="#FF43A047"
+        android:pathData="M58.5,71.5 a10,10 0 1 0 20,0 a10,10 0 1 0 -20,0 Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.5"
+        android:pathData="M58.5,71.5 a10,10 0 1 0 20,0 a10,10 0 1 0 -20,0 Z" />
+
+    <!-- Галочка -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M63.8,71.8 L67.2,75.2 L73.4,68.4" />
+</vector>

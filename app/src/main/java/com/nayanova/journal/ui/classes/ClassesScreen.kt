@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.nayanova.journal.ui.status.OfflineStatusBanner
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,6 +70,7 @@ fun ClassesScreen(
                 .padding(padding)
                 .padding(16.dp)
         ) {
+            OfflineStatusBanner(modifier = Modifier.fillMaxWidth())
             if (isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()

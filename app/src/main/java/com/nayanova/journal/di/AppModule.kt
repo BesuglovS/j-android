@@ -1,14 +1,22 @@
 package com.nayanova.journal.di
 
 import android.content.Context
+import androidx.room.Room
+import com.google.gson.Gson
 import com.nayanova.journal.data.api.AuthInterceptor
 import com.nayanova.journal.data.api.JournalApi
+import com.nayanova.journal.data.local.AppDatabase
+import com.nayanova.journal.data.local.CacheDao
+import com.nayanova.journal.data.local.PendingChangeDao
 import com.nayanova.journal.util.CookieStore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -55,4 +63,29 @@ object AppModule {
     fun provideJournalApi(retrofit: Retrofit): JournalApi {
         return retrofit.create(JournalApi::class.java)
     }
+
+    @Provides
+    @Singleton
+    fun provideGson(): Gson = Gson()
+
+    @Provides
+    @Singleton
+    fun provideAppDatabase(@ApplicationContext context: Context): AppDatabase {
+        return Room.databaseBuilder(context, AppDatabase::class.java, "journal.db")
+            .fallbackToDestructiveMigration()
+            .build()
+    }
+
+    @Provides
+    @Singleton
+    fun provideCacheDao(db: AppDatabase): CacheDao = db.cacheDao()
+
+    @Provides
+    @Singleton
+    fun providePendingChangeDao(db: AppDatabase): PendingChangeDao = db.pendingChangeDao()
+
+    @Provides
+    @Singleton
+    fun provideApplicationScope(): CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO)
 }

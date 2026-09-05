@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,6 +36,12 @@ class CookieStore @Inject constructor(
     }
 
     private val _cachedCookie = MutableStateFlow("")
+
+    // Завершается, когда из DataStore прочитано начальное значение сессии.
+    // Без этого на холодном старте _cachedCookie пустой, и валидная сессия
+    // выглядит «неавторизованной» → приложение падает на экран входа/журнал.
+    private val initialLoad = CompletableDeferred<Unit>()
+
     val cookieFlow: Flow<String> = context.dataStore.data.map { it[COOKIE_KEY] ?: "" }
 
     val serverUrlFlow: Flow<String> = context.dataStore.data.map {
@@ -43,12 +50,27 @@ class CookieStore @Inject constructor(
 
     init {
         scope.launch {
-            cookieFlow.collect { _cachedCookie.value = it }
+            var isFirst = true
+            cookieFlow.collect { value ->
+                _cachedCookie.value = value
+                if (isFirst) {
+                    isFirst = false
+                    initialLoad.complete(Unit)
+                }
+            }
         }
+    }
+
+    /** Ожидает загрузки начального значения сессии из хранилища. */
+    suspend fun ensureLoaded() {
+        initialLoad.await()
     }
 
     suspend fun setCookie(value: String) {
         context.dataStore.edit { it[COOKIE_KEY] = value }
+        // Синхронно обновляем кэш в памяти, чтобы OkHttp-перехватчик,
+        // который читает getCookie() не-блокирующе, сразу увидел новую куку.
+        _cachedCookie.value = value
     }
 
     suspend fun setServerUrl(url: String) {
@@ -97,6 +119,7 @@ class CookieStore @Inject constructor(
         context.dataStore.edit {
             it.remove(COOKIE_KEY)
         }
+        _cachedCookie.value = ""
     }
 
     suspend fun isLoggedIn(): Boolean {

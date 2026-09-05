@@ -30,6 +30,7 @@ import com.nayanova.journal.data.model.Student
 import com.nayanova.journal.ui.journal.JournalViewModel
 import com.nayanova.journal.ui.journal.MarkDialog
 import com.nayanova.journal.ui.journal.markColor
+import com.nayanova.journal.ui.status.OfflineStatusBanner
 import kotlin.math.roundToInt
 
 private val COLOR_PRESENT = Color(0xFF4CAF50)
@@ -58,30 +59,33 @@ fun ClassJournalScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "Журнал: $className — $subjectName",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+            Column {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                "Журнал: $className — $subjectName",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimary
+                    ),
+                    actions = {
+                        IconButton(onClick = { viewModel.load(classId, subjectId) }) {
+                            Icon(Icons.Default.Refresh, "Обновить", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
                     }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад", tint = MaterialTheme.colorScheme.onPrimary)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary
-                ),
-                actions = {
-                    IconButton(onClick = { viewModel.load(classId, subjectId) }) {
-                        Icon(Icons.Default.Refresh, "Обновить", tint = MaterialTheme.colorScheme.onPrimary)
-                    }
-                }
-            )
+                )
+                OfflineStatusBanner()
+            }
         }
     ) { padding ->
         when {
@@ -150,7 +154,6 @@ private fun ClassJournalTable(
     val dateColWidth = 80.dp
     val cellHeight = 48.dp
     val headerHeight = 56.dp
-    val headerMinHeight = headerHeight
 
     var markDialogStudent by remember { mutableStateOf<Student?>(null) }
     var markDialogLesson by remember { mutableStateOf<Lesson?>(null) }
@@ -187,10 +190,10 @@ private fun ClassJournalTable(
                 Box(
                     modifier = Modifier
                         .width(studentColWidth)
-                        .heightIn(min = headerMinHeight)
-                        .padding(4.dp)
+                        .height(headerHeight)
                         .background(MaterialTheme.colorScheme.primaryContainer)
-                        .border(0.5.dp, COLOR_BORDER_LIGHT),
+                        .border(0.5.dp, COLOR_BORDER_LIGHT)
+                        .padding(4.dp),
                     contentAlignment = Alignment.CenterStart
                 ) {
                     Text(
@@ -214,7 +217,7 @@ private fun ClassJournalTable(
                         contentAlignment = Alignment.CenterStart
                     ) {
                         Text(
-                            text = "${student.lastName} ${student.firstName.firstOrNull() ?: ""}.",
+                            text = "${student.lastName} ${student.firstName}",
                             fontSize = 12.sp,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis

@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.nayanova.journal.ui.status.OfflineStatusBanner
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -70,7 +71,13 @@ fun LessonsScreen(
             )
         }
     ) { padding ->
-        if (isLoading && lessons.isEmpty()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            OfflineStatusBanner()
+            if (isLoading && lessons.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
@@ -162,6 +169,7 @@ fun LessonsScreen(
                 }
             }
         }
+    }
     }
 
     if (showCreateDialog) {

@@ -243,7 +243,7 @@ class JournalViewModel @Inject constructor(
 
     fun deleteHomework(homeworkId: Int, lessonId: Int) {
         viewModelScope.launch {
-            when (val result = repository.deleteHomework(homeworkId)) {
+            when (val result = repository.deleteHomework(homeworkId, lessonId)) {
                 is JournalRepository.Result.Success -> {
                     _saveMessage.value = "Домашнее задание удалено"
                     loadLesson(lessonId)

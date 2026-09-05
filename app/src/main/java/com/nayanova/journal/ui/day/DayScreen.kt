@@ -14,6 +14,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.nayanova.journal.ui.status.OfflineStatusBanner
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -64,6 +65,8 @@ fun DayScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
+            OfflineStatusBanner()
+
             // Строка выбора даты: стрелки + дата (по нажатию — календарь)
             Row(
                 modifier = Modifier

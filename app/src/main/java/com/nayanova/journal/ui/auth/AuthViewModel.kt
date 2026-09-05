@@ -53,6 +53,10 @@ class AuthViewModel @Inject constructor(
     fun checkAuth() {
         viewModelScope.launch {
             _isLoading.value = true
+            // Ждём загрузки сохранённой сессии из хранилища — иначе на холодном
+            // старте валидная сессия выглядит недействительной, и пользователь
+            // остаётся на экране входа (веб-журнал) вместо расписания на день.
+            cookieStore.ensureLoaded()
             when (val result = repository.checkAuth()) {
                 is JournalRepository.Result.Success -> {
                     _isLoggedIn.value = result.data
@@ -69,16 +73,28 @@ class AuthViewModel @Inject constructor(
     }
 
     /**
-     * Вызывается из потока WebView (JavascriptInterface) при ручном входе.
-     * Сохраняет учётные данные, если включена опция сохранения.
+     * Вход по логину/паролю через единый портал (прямой POST без WebView).
+     * При успехе сохраняет учётные данные, если включён флаг remember.
      */
-    fun onManualCredentials(login: String, password: String, remember: Boolean) {
-        if (!remember) return
+    fun login(login: String, password: String, remember: Boolean) {
+        _isLoading.value = true
+        _error.value = null
         viewModelScope.launch {
-            cookieStore.saveCredentials(login, password)
-            _hasSavedCredentials.value = true
-            _savedLogin.value = login
-            _savedPassword.value = password
+            when (val result = repository.login(login, password)) {
+                is JournalRepository.Result.Success -> {
+                    if (remember) {
+                        cookieStore.saveCredentials(login, password)
+                        _hasSavedCredentials.value = true
+                        _savedLogin.value = login
+                        _savedPassword.value = password
+                    }
+                    _isLoggedIn.value = true
+                }
+                is JournalRepository.Result.Error -> {
+                    _error.value = result.message
+                }
+            }
+            _isLoading.value = false
         }
     }
 

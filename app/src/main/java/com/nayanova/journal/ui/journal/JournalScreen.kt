@@ -32,6 +32,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.nayanova.journal.data.model.Student
+import com.nayanova.journal.ui.status.OfflineStatusBanner
 
 // Оценка не может быть 1: только 2, 3, 4, 5
 val VALID_MARKS = listOf(2, 3, 4, 5)
@@ -81,7 +82,8 @@ fun JournalScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
+            Column {
+                TopAppBar(
                 title = {
                     Column {
                         Text(
@@ -122,7 +124,9 @@ fun JournalScreen(
                         Icon(Icons.Default.HomeWork, "Домашнее задание", tint = MaterialTheme.colorScheme.onPrimary)
                     }
                 }
-            )
+                )
+                OfflineStatusBanner()
+            }
         }
     ) { padding ->
         if (isLoading) {
@@ -289,7 +293,7 @@ fun JournalGrid(
                             contentAlignment = Alignment.CenterStart
                         ) {
                             Text(
-                                text = "${student.lastName} ${student.firstName.firstOrNull() ?: ""}.",
+                                text = "${student.lastName} ${student.firstName}",
                                 fontSize = 13.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis

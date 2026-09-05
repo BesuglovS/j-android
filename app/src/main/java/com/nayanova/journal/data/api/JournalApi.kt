@@ -6,6 +6,10 @@ import retrofit2.http.*
 
 interface JournalApi {
 
+    /** Вход через единый портал: POST на auth.nayanovaacademy.ru, в ответе — Set-Cookie: auth_session. */
+    @POST
+    suspend fun authLogin(@Url url: String, @Body body: Map<String, String>): Response<Map<String, Any>>
+
     @GET("api/v1/me")
     suspend fun me(): Response<Map<String, Any>>
 

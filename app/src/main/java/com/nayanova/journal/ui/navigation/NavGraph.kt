@@ -6,15 +6,15 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import com.nayanova.journal.ui.auth.LoginScreen
 import com.nayanova.journal.ui.classes.ClassesScreen
 import com.nayanova.journal.ui.classjournal.ClassJournalScreen
 import com.nayanova.journal.ui.day.DayScreen
 import com.nayanova.journal.ui.journal.JournalScreen
 import com.nayanova.journal.ui.lessons.LessonsScreen
+import com.nayanova.journal.ui.settings.SettingsScreen
 
 object Routes {
-    const val LOGIN = "login"
+    const val SETTINGS = "settings"
     const val DAY = "day"
     const val CLASSES = "classes"
     const val LESSONS = "lessons/{classId}/{subjectId}/{className}/{subjectName}"
@@ -34,12 +34,12 @@ object Routes {
 
 @Composable
 fun NavGraph(navController: NavHostController) {
-    NavHost(navController = navController, startDestination = Routes.LOGIN) {
-        composable(Routes.LOGIN) {
-            LoginScreen(
+    NavHost(navController = navController, startDestination = Routes.SETTINGS) {
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
                 onLoginSuccess = {
                     navController.navigate(Routes.DAY) {
-                        popUpTo(Routes.LOGIN) { inclusive = true }
+                        popUpTo(Routes.SETTINGS) { inclusive = true }
                     }
                 }
             )
@@ -53,7 +53,7 @@ fun NavGraph(navController: NavHostController) {
                     navController.navigate(Routes.CLASSES)
                 },
                 onLogout = {
-                    navController.navigate(Routes.LOGIN) {
+                    navController.navigate(Routes.SETTINGS) {
                         popUpTo(0) { inclusive = true }
                     }
                 }
@@ -66,7 +66,7 @@ fun NavGraph(navController: NavHostController) {
                 },
                 onBack = { navController.popBackStack() },
                 onLogout = {
-                    navController.navigate(Routes.LOGIN) {
+                    navController.navigate(Routes.SETTINGS) {
                         popUpTo(0) { inclusive = true }
                     }
                 }

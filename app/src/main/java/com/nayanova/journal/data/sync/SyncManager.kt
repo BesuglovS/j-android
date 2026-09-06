@@ -240,7 +240,7 @@ class SyncManager @Inject constructor(
             startTime = payload.startTime.ifBlank { null },
             topic = payload.topic.ifBlank { null },
             lessonType = null,
-            note = null,
+            note = payload.note.ifBlank { null },
             className = null,
             subjectName = null
         )
@@ -382,6 +382,7 @@ class SyncManager @Inject constructor(
             put("date", p.date)
             if (p.startTime.isNotEmpty()) put("start_time", p.startTime)
             if (p.topic.isNotEmpty()) put("topic", p.topic)
+            if (p.note.isNotEmpty()) put("note", p.note)
         }
         val resp = api.lessonCreate(body)
         if (!resp.isSuccessful) return false

@@ -11,6 +11,7 @@ data class CreateLessonPayload(
     val date: String,
     val startTime: String,
     val topic: String,
+    val note: String = "",
     /** Локальный отрицательный id урока, созданного офлайн. */
     val localLessonId: Int
 )

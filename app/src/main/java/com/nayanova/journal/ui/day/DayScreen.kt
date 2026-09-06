@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -37,7 +38,21 @@ fun DayScreen(
     val selectedDate by viewModel.selectedDate.collectAsState()
     var showDatePicker by remember { mutableStateOf(false) }
 
+    val importItems by viewModel.importItems.collectAsState()
+    val importLoading by viewModel.importLoading.collectAsState()
+    val isImporting by viewModel.isImporting.collectAsState()
+    val importMessage by viewModel.importMessage.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(importMessage) {
+        importMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.consumeImportMessage()
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Электронный журнал") },
@@ -53,11 +68,21 @@ fun DayScreen(
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = onCreateLesson,
-                icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("Новое занятие") }
-            )
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                ExtendedFloatingActionButton(
+                    onClick = { viewModel.openImportPreview() },
+                    icon = { Icon(Icons.Default.EventRepeat, contentDescription = null) },
+                    text = { Text("Добавить занятия из расписания") }
+                )
+                ExtendedFloatingActionButton(
+                    onClick = onCreateLesson,
+                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                    text = { Text("Новое занятие") }
+                )
+            }
         }
     ) { padding ->
         Column(
@@ -167,6 +192,117 @@ fun DayScreen(
             DatePicker(state = pickerState)
         }
     }
+
+    if (importLoading || importItems != null) {
+        ScheduleImportDialog(
+            items = importItems,
+            isLoading = importLoading,
+            isImporting = isImporting,
+            selectedCount = importItems?.count { it.enabled && it.selected } ?: 0,
+            onToggle = viewModel::toggleImportItem,
+            onConfirm = viewModel::confirmImport,
+            onDismiss = viewModel::dismissImportPreview
+        )
+    }
+}
+
+@Composable
+private fun ScheduleImportDialog(
+    items: List<ScheduleImportItem>?,
+    isLoading: Boolean,
+    isImporting: Boolean,
+    selectedCount: Int,
+    onToggle: (Int) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Занятия из расписания") },
+        text = {
+            when {
+                isLoading || items == null -> {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(80.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+                items.isEmpty() -> {
+                    Text("В расписании нет занятий на этот день")
+                }
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 400.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        itemsIndexed(items) { index, item ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(
+                                        if (item.enabled) Modifier.clickable { onToggle(index) }
+                                        else Modifier
+                                    ),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = item.selected,
+                                    onCheckedChange = if (item.enabled) ({ onToggle(index) }) else null
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = buildString {
+                                            append(item.schedule.timeStart ?: "—")
+                                            append("  ")
+                                            append(item.schedule.className)
+                                            append(" — ")
+                                            append(item.schedule.subject)
+                                            if (!item.schedule.parallelGroup.isNullOrBlank()) {
+                                                append(" (")
+                                                append(item.schedule.parallelGroup)
+                                                append(")")
+                                            }
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    val subtitle = when {
+                                        item.exists -> "Уже есть в журнале"
+                                        item.classId == null -> "Класс не найден в журнале"
+                                        item.subjectId == null -> "Предмет не найден в журнале"
+                                        else -> listOfNotNull(
+                                            item.journalClassName?.let { "Журнал: $it" },
+                                            item.schedule.room?.takeIf { it.isNotBlank() }?.let { "Каб. $it" }
+                                        ).joinToString(" · ").ifEmpty { null }
+                                    }
+                                    if (subtitle != null) {
+                                        Text(
+                                            text = subtitle,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (item.enabled) MaterialTheme.colorScheme.onSurfaceVariant
+                                            else MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = !isImporting && selectedCount > 0) {
+                Text(if (selectedCount > 0) "Добавить ($selectedCount)" else "Добавить")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isImporting) {
+                Text(if (isImporting) "Импорт…" else "Отмена")
+            }
+        }
+    )
 }
 
 @Composable

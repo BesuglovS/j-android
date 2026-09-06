@@ -247,9 +247,16 @@ class JournalRepository @Inject constructor(
         }
     }
 
-    suspend fun createLesson(classId: Int, subjectId: Int, date: String, startTime: String = "", topic: String = ""): Result<Int> {
+    suspend fun createLesson(
+        classId: Int,
+        subjectId: Int,
+        date: String,
+        startTime: String = "",
+        topic: String = "",
+        note: String = ""
+    ): Result<Int> {
         val offlineCreate: suspend (Int, Boolean) -> Result<Int> = { localId, enqueue ->
-            val payload = CreateLessonPayload(classId, subjectId, date, startTime, topic, localId)
+            val payload = CreateLessonPayload(classId, subjectId, date, startTime, topic, note, localId)
             syncManager.applyCreateLesson(payload)
             if (enqueue) syncManager.enqueueCreateLesson(payload)
             Result.Success(localId)
@@ -263,6 +270,7 @@ class JournalRepository @Inject constructor(
                 }
                 if (startTime.isNotEmpty()) body["start_time"] = startTime
                 if (topic.isNotEmpty()) body["topic"] = topic
+                if (note.isNotEmpty()) body["note"] = note
                 val response = api.lessonCreate(body)
                 if (response.isSuccessful) {
                     val id = response.body()?.get("id") ?: 0
@@ -271,7 +279,7 @@ class JournalRepository @Inject constructor(
                             Lesson(
                                 id = id, subjectId = subjectId, classId = classId, date = date,
                                 startTime = startTime.ifBlank { null }, topic = topic.ifBlank { null },
-                                lessonType = null, note = null
+                                lessonType = null, note = note.ifBlank { null }
                             )
                         )
                         Result.Success(id)

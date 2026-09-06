@@ -115,3 +115,17 @@ data class ClassJournalData(
     val marks: Map<String, Map<String, List<Mark>>>,
     val attendance: Map<String, Map<String, AttendanceEntry>>
 )
+
+/** Строка расписания из r-web (api.php?action=schedule). */
+data class ScheduleItem(
+    val date: String,
+    @SerializedName("day_of_week") val dayOfWeek: String? = null,
+    @SerializedName("class_name") val className: String = "",
+    @SerializedName("lesson_num") val lessonNum: Int? = null,
+    @SerializedName("time_start") val timeStart: String? = null,
+    @SerializedName("time_end") val timeEnd: String? = null,
+    val subject: String = "",
+    val teacher: String? = null,
+    val room: String? = null,
+    @SerializedName("parallel_group") val parallelGroup: String? = null
+)

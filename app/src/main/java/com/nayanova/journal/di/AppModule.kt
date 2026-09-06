@@ -8,6 +8,7 @@ import com.nayanova.journal.data.api.JournalApi
 import com.nayanova.journal.data.local.AppDatabase
 import com.nayanova.journal.data.local.CacheDao
 import com.nayanova.journal.data.local.PendingChangeDao
+import com.nayanova.journal.data.api.ScheduleApi
 import com.nayanova.journal.util.CookieStore
 import dagger.Module
 import dagger.Provides
@@ -88,4 +89,27 @@ object AppModule {
     @Singleton
     fun provideApplicationScope(): CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * API сайта расписания (r-web): отдельный клиент без cookie-интерцептора
+     * журнала, чтобы не отправлять сессию журнала на чужой домен.
+     */
+    @Provides
+    @Singleton
+    fun provideScheduleApi(): ScheduleApi {
+        val logging = HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BODY
+        }
+        val client = OkHttpClient.Builder()
+            .addInterceptor(logging)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
+        val retrofit = Retrofit.Builder()
+            .baseUrl("https://r.nayanovaacademy.ru/")
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+        return retrofit.create(ScheduleApi::class.java)
+    }
 }

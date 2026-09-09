@@ -52,6 +52,7 @@ fun ClassJournalScreen(
     val data by viewModel.data.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
+    val title by viewModel.title.collectAsState()
 
     LaunchedEffect(classId, subjectId) {
         viewModel.load(classId, subjectId)
@@ -64,7 +65,7 @@ fun ClassJournalScreen(
                     title = {
                         Column {
                             Text(
-                                "Журнал: $className — $subjectName",
+                                "Журнал: $className — ${title ?: subjectName}",
                                 style = MaterialTheme.typography.titleMedium
                             )
                         }

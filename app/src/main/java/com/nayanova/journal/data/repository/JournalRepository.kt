@@ -16,6 +16,9 @@ import com.nayanova.journal.data.sync.SaveMarksPayload
 import com.nayanova.journal.data.sync.SaveRemarksPayload
 import com.nayanova.journal.data.sync.SyncManager
 import com.nayanova.journal.util.CookieStore
+import com.nayanova.journal.util.SubjectMerge
+import com.nayanova.journal.util.SubjectMerge.SubjectGroup
+import com.nayanova.journal.util.SubjectMerge.subjectIds
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
@@ -61,6 +64,8 @@ class JournalRepository @Inject constructor(
                 if (cookie != null) {
                     cookieStore.setCookie(cookie)
                     syncManager.fetchAndCacheAll()
+                    // Сессия обновилась — сразу проталкиваем накопившиеся офлайн-изменения.
+                    syncManager.syncPendingChanges()
                     Result.Success(true)
                 } else {
                     Result.Error("Не удалось получить сессию")
@@ -218,6 +223,19 @@ class JournalRepository @Inject constructor(
     }
 
     suspend fun lessonDetail(lessonId: Int): Result<LessonDetail> {
+        return when (val result = fetchLessonDetail(lessonId)) {
+            is Result.Success -> {
+                val enhanced = enhanceHomeworkForGroup(result.data)
+                if (enhanced != result.data) {
+                    syncManager.cacheLessonDetail(lessonId, enhanced)
+                }
+                Result.Success(enhanced)
+            }
+            is Result.Error -> result
+        }
+    }
+
+    private suspend fun fetchLessonDetail(lessonId: Int): Result<LessonDetail> {
         return try {
             if (isOnline()) {
                 val response = api.lessonDetail(lessonId)
@@ -245,6 +263,38 @@ class JournalRepository @Inject constructor(
                 Result.Error(e.message ?: "Ошибка сети")
             )
         }
+    }
+
+    /**
+     * Для объединённого предмета «Информатика + Труд» ДЗ предыдущего урока —
+     * это ДЗ ближайшего предыдущего занятия из ОБОИХ предметов, а не только
+     * того же предмета. Так задание, выданное на одном виде урока, показывается
+     * на ближайшем следующем (сдача и оценка «ДЗ»).
+     */
+    private suspend fun enhanceHomeworkForGroup(detail: LessonDetail): LessonDetail {
+        val lesson = detail.lesson
+        val group = subjectGroup(lesson.classId) ?: return detail
+        if (lesson.subjectId !in subjectIds(group)) return detail
+
+        val merged = when (val r = mergedLessons(lesson.classId, lesson.subjectId)) {
+            is Result.Success -> r.data
+            is Result.Error -> return detail
+        }
+        // mergedLessons сортирует по убыванию (новые сверху): предыдущий урок — следующий в списке.
+        val index = merged.indexOfFirst { it.id == lesson.id }
+        if (index < 0 || index >= merged.lastIndex) return detail
+        val prev = merged[index + 1]
+        // Ближайший предыдущий урок того же предмета — сервер уже вернул его ДЗ.
+        if (prev.subjectId == lesson.subjectId) return detail
+        val prevDetail = when (val r = fetchLessonDetail(prev.id)) {
+            is Result.Success -> r.data
+            is Result.Error -> return detail
+        }
+        val prevHomework = prevDetail.homeworks.firstOrNull()
+        return detail.copy(
+            previousHomework = prevHomework,
+            previousLessonDate = prev.date
+        )
     }
 
     suspend fun createLesson(
@@ -476,13 +526,19 @@ class JournalRepository @Inject constructor(
                 }
             } else {
                 fromCache(
-                    cacheDao.getStudents(classId).map { it.toModel() }.takeIf { it.isNotEmpty() },
+                    cacheDao.getStudentsForClass(classId)
+                        .ifEmpty { cacheDao.getStudents(classId) }
+                        .map { it.toModel() }
+                        .takeIf { it.isNotEmpty() },
                     Result.Error("Нет сети — ученики недоступны")
                 )
             }
         } catch (e: Exception) {
             fromCache(
-                cacheDao.getStudents(classId).map { it.toModel() }.takeIf { it.isNotEmpty() },
+                cacheDao.getStudentsForClass(classId)
+                    .ifEmpty { cacheDao.getStudents(classId) }
+                    .map { it.toModel() }
+                    .takeIf { it.isNotEmpty() },
                 Result.Error(e.message ?: "Ошибка сети")
             )
         }
@@ -542,6 +598,94 @@ class JournalRepository @Inject constructor(
             )
         }
     }
+
+    // ------------------------------------------------------------------
+    // Объединённый предмет «Информатика + Труд (технология)» (9 классы).
+    // ------------------------------------------------------------------
+
+    /**
+     * Пара предметов, объединяемых в один, для данного класса.
+     * Возвращается только для 9 классов, в которых есть и «Информатика»,
+     * и «Труд (технология)» (это приложение преподавателя Безуглова С.В.).
+     */
+    suspend fun subjectGroup(classId: Int): SubjectGroup? {
+        val cls = when (val r = classes()) {
+            is Result.Success -> r.data.firstOrNull { it.id == classId }
+            is Result.Error -> null
+        } ?: return null
+        if (!SubjectMerge.isNinthGrade(cls.grade, cls.name)) return null
+
+        val subjects = when (val r = classSubjects(classId)) {
+            is Result.Success -> r.data
+            is Result.Error -> return null
+        }
+        val pair = SubjectMerge.findPair(subjects) ?: return null
+        return SubjectGroup(classId, pair.first, pair.second)
+    }
+
+    /** Заголовок объединённого предмета, если classId+subjectId входят в пару. */
+    suspend fun subjectGroupLabel(classId: Int, subjectId: Int): String? {
+        val group = subjectGroup(classId) ?: return null
+        return if (subjectId in subjectIds(group)) group.label else null
+    }
+
+    /**
+     * Уроки объединённого предмета: если subjectId входит в пару —
+     * уроки обоих предметов одним списком (по дате/времени, новые сверху).
+     */
+    suspend fun mergedLessons(classId: Int, subjectId: Int): Result<List<Lesson>> {
+        val group = subjectGroup(classId) ?: return lessons(classId, subjectId)
+        if (subjectId !in subjectIds(group)) return lessons(classId, subjectId)
+
+        val r1 = lessons(classId, group.informatics.id)
+        val r2 = lessons(classId, group.trud.id)
+        val l1 = (r1 as? Result.Success)?.data
+        val l2 = (r2 as? Result.Success)?.data
+        if (l1 == null && l2 == null) return r1
+        return Result.Success(mergeLessons(l1 ?: emptyList(), l2 ?: emptyList()))
+    }
+
+    private fun mergeLessons(a: List<Lesson>, b: List<Lesson>): List<Lesson> =
+        (a + b)
+            .distinctBy { it.id }
+            .sortedWith(
+                compareByDescending<Lesson> { it.date }
+                    .thenByDescending { it.startTime ?: "" }
+                    .thenByDescending { it.id }
+            )
+
+    /**
+     * Общий журнал объединённого предмета: склеивает уроки, оценки и
+     * посещаемость двух предметов. Средняя оценка считается по всем урокам.
+     * Офлайн-кеш остаётся попредметным, поэтому локальные правки видны.
+     */
+    suspend fun mergedClassJournal(classId: Int, subjectId: Int): Result<ClassJournalData> {
+        val group = subjectGroup(classId) ?: return classJournal(classId, subjectId)
+        if (subjectId !in subjectIds(group)) return classJournal(classId, subjectId)
+
+        val r1 = classJournal(classId, group.informatics.id)
+        val r2 = classJournal(classId, group.trud.id)
+        val d1 = (r1 as? Result.Success)?.data
+        val d2 = (r2 as? Result.Success)?.data
+        if (d1 == null && d2 == null) return r1
+        val a = d1 ?: d2!!
+        val b = d2 ?: a
+        return Result.Success(mergeClassJournals(a, b))
+    }
+
+    private fun mergeClassJournals(a: ClassJournalData, b: ClassJournalData): ClassJournalData =
+        ClassJournalData(
+            lessons = (a.lessons + b.lessons)
+                .distinctBy { it.id }
+                .sortedWith(
+                    compareBy<Lesson> { it.date }
+                        .thenBy { it.startTime ?: "" }
+                        .thenBy { it.id }
+                ),
+            students = a.students.ifEmpty { b.students },
+            marks = a.marks + b.marks,
+            attendance = a.attendance + b.attendance
+        )
 
     /** Триггер синхронизации из UI (полустовый запрос на синхронизацию сейчас). */
     suspend fun syncNow(): com.nayanova.journal.data.sync.SyncResult = syncManager.syncPendingChanges()

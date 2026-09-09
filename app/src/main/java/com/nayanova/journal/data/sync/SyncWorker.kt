@@ -18,13 +18,17 @@ class SyncWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         return try {
-            if (pendingChangeDao.count() == 0) {
+            val pendingResult = if (pendingChangeDao.count() == 0) {
                 Result.success()
             } else {
                 val result = syncManager.syncPendingChanges()
                 if (result.remaining == 0) Result.success()
                 else Result.retry()
             }
+            // Обновляем справочники (классы/предметы/ученики) при каждой синхронизации —
+            // best effort: сбой обновления не влияет на результат выше.
+            syncManager.refreshReferenceData()
+            pendingResult
         } catch (e: Exception) {
             Result.retry()
         }

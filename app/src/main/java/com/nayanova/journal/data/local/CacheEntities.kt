@@ -44,6 +44,13 @@ data class StudentEntity(
     val isActive: Int
 )
 
+/** Связь «класс — ученик» (аналог student_classes на сервере): ученик может состоять в нескольких классах. */
+@Entity(tableName = "class_students", primaryKeys = ["classId", "studentId"])
+data class ClassStudentRefEntity(
+    val classId: Int,
+    val studentId: Int
+)
+
 @Entity(tableName = "quarters")
 data class QuarterEntity(
     @PrimaryKey val id: Int,

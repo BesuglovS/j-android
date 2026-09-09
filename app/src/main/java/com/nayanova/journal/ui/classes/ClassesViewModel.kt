@@ -6,6 +6,7 @@ import com.nayanova.journal.data.model.SchoolClass
 import com.nayanova.journal.data.model.Subject
 import com.nayanova.journal.data.repository.JournalRepository
 import com.nayanova.journal.util.CookieStore
+import com.nayanova.journal.util.SubjectMerge
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,6 +18,14 @@ class ClassesViewModel @Inject constructor(
     private val repository: JournalRepository,
     private val cookieStore: CookieStore
 ) : ViewModel() {
+
+    /** Предмет в списке выбора; для объединённого — ещё и парный. */
+    data class SubjectItem(
+        val subject: Subject,
+        val paired: Subject? = null
+    ) {
+        val label: String get() = paired?.let { "${subject.name} и ${it.name}" } ?: subject.name
+    }
 
     private val _classes = MutableStateFlow<List<SchoolClass>>(emptyList())
     val classes = _classes.asStateFlow()
@@ -80,5 +89,23 @@ class ClassesViewModel @Inject constructor(
         viewModelScope.launch {
             cookieStore.clearSession()
         }
+    }
+
+    /**
+     * Предметы класса для экрана выбора: в 9 классе с «Информатикой»
+     * и «Трудом (технологией)» пара показывается одной карточкой.
+     */
+    fun displaySubjects(classId: Int, classes: List<SchoolClass>, subjects: List<Subject>): List<SubjectItem> {
+        if (subjects.isEmpty()) return emptyList()
+        val cls = classes.firstOrNull { it.id == classId }
+        if (cls == null || !SubjectMerge.isNinthGrade(cls.grade, cls.name)) {
+            return subjects.map { SubjectItem(it) }
+        }
+        val pair = SubjectMerge.findPair(subjects)
+        if (pair == null) return subjects.map { SubjectItem(it) }
+        val (inf, trud) = pair
+        return subjects
+            .filter { it.id != trud.id }
+            .map { if (it.id == inf.id) SubjectItem(inf, trud) else SubjectItem(it) }
     }
 }

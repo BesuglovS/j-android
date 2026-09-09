@@ -5,6 +5,7 @@ import com.nayanova.journal.data.api.JournalApi
 import com.nayanova.journal.data.local.CacheDao
 import com.nayanova.journal.data.local.ClassEntity
 import com.nayanova.journal.data.local.ClassJournalEntity
+import com.nayanova.journal.data.local.ClassStudentRefEntity
 import com.nayanova.journal.data.local.EntityMappers.toEntity
 import com.nayanova.journal.data.local.LessonDetailEntity
 import com.nayanova.journal.data.local.LessonEntity
@@ -20,12 +21,21 @@ import com.nayanova.journal.data.model.LessonDetail
 import com.nayanova.journal.data.model.Mark
 import com.nayanova.journal.data.model.Remark
 import com.nayanova.journal.data.model.SchoolClass
+import android.util.Log
 import kotlinx.coroutines.flow.Flow
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 
 data class SyncResult(val synced: Int, val remaining: Int)
+
+/** Итог воспроизведения одного изменения очереди. */
+private enum class ReplayResult {
+    SUCCESS,
+    FAILURE,
+    /** HTTP 401: сессия протухла — данные нельзя отбрасывать, ждём перелогина. */
+    AUTH_FAILURE
+}
 
 @Singleton
 class SyncManager @Inject constructor(
@@ -37,12 +47,39 @@ class SyncManager @Inject constructor(
     private val negativeId = AtomicInteger(-1)
     fun nextNegativeId(): Int = negativeId.getAndDecrement()
 
+    /** Максимальное число попыток до того, как изменение будет отброшено (dead-letter). */
+    private val maxAttempts = 5
+
     val pendingChanges: Flow<Int> = pendingChangeDao.observeCount()
 
     // ------------------------------------------------------------------
     // Полная первичная загрузка при входе: кешируем всё в локальную БД.
     // ------------------------------------------------------------------
     suspend fun fetchAndCacheAll(): Boolean {
+        return try {
+            if (!refreshReferenceData()) return false
+            for (c in cacheDao.getClasses()) {
+                val lessonsResp = api.lessons(c.id, 0)
+                if (lessonsResp.isSuccessful) {
+                    cacheDao.upsertLessons(
+                        (lessonsResp.body()?.get("lessons") ?: emptyList())
+                            .filter { it.id > 0 }
+                            .map { it.toEntity() }
+                    )
+                }
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Обновление справочников (классы, предметы, ученики, четверти).
+    // Вызывается при входе и фоновой синхронизацией, чтобы офлайн-кеш
+    // не отставал от сервера (сайт при этом всегда актуален).
+    // ------------------------------------------------------------------
+    suspend fun refreshReferenceData(): Boolean {
         return try {
             val classesResp = api.classes()
             if (!classesResp.isSuccessful) return false
@@ -56,15 +93,7 @@ class SyncManager @Inject constructor(
                 }
                 val studsResp = api.students(c.id)
                 if (studsResp.isSuccessful) {
-                    cacheDao.upsertStudents((studsResp.body()?.get("students") ?: emptyList()).map { it.toEntity() })
-                }
-                val lessonsResp = api.lessons(c.id, 0)
-                if (lessonsResp.isSuccessful) {
-                    cacheDao.upsertLessons(
-                        (lessonsResp.body()?.get("lessons") ?: emptyList())
-                            .filter { it.id > 0 }
-                            .map { it.toEntity() }
-                    )
+                    cacheStudents(c.id, studsResp.body()?.get("students") ?: emptyList())
                 }
             }
 
@@ -140,6 +169,12 @@ class SyncManager @Inject constructor(
 
     suspend fun cacheStudents(classId: Int, students: List<com.nayanova.journal.data.model.Student>) {
         cacheDao.upsertStudents(students.map { it.toEntity() })
+        if (classId > 0) {
+            // Связь «класс — ученики» — как на сервере (student_classes), а не по
+            // основному классу ученика: ученик может состоять в нескольких классах.
+            cacheDao.clearClassStudents(classId)
+            cacheDao.insertClassStudents(students.map { ClassStudentRefEntity(classId, it.id) })
+        }
     }
 
     suspend fun cacheQuarters(quarters: List<com.nayanova.journal.data.model.Quarter>) {
@@ -246,9 +281,11 @@ class SyncManager @Inject constructor(
         )
         val entity = lesson.toEntity()
         cacheDao.upsertLesson(entity)
-        val students = cacheDao.getStudents(payload.classId).map {
-            com.nayanova.journal.data.local.EntityMappers.run { it.toModel() }
-        }
+        val students = cacheDao.getStudentsForClass(payload.classId)
+            .ifEmpty { cacheDao.getStudents(payload.classId) }
+            .map {
+                com.nayanova.journal.data.local.EntityMappers.run { it.toModel() }
+            }
         val detail = LessonDetail(
             lesson = lesson,
             students = students,
@@ -326,19 +363,41 @@ class SyncManager @Inject constructor(
         var synced = 0
         val lessonIdRemap = mutableMapOf<Int, Int>()
         for (change in changes) {
-            val ok = replay(change, lessonIdRemap)
-            if (ok) {
-                pendingChangeDao.deleteById(change.id)
-                synced++
-            } else {
-                pendingChangeDao.updateAttempts(change.id, change.attempts + 1)
-                break
+            when (replay(change, lessonIdRemap)) {
+                ReplayResult.SUCCESS -> {
+                    pendingChangeDao.deleteById(change.id)
+                    synced++
+                }
+                ReplayResult.AUTH_FAILURE -> {
+                    // Сессия протухла: данные НЕ отбрасываем. Дождёмся перелогина
+                    // (после успешного входа repository сам запустит синхронизацию),
+                    // а пока просто останавливаемся, чтобы не долбить сервер.
+                    pendingChangeDao.updateAttempts(change.id, change.attempts + 1)
+                    break
+                }
+                ReplayResult.FAILURE -> {
+                    val attempts = change.attempts + 1
+                    if (attempts >= maxAttempts) {
+                        // Безнадёжное изменение: без лимита мы бы ретраили его вечно,
+                        // блокируя всю очередь. Отбрасываем (остаётся в logcat для разбора).
+                        Log.w(
+                            TAG,
+                            "Dropping permanently failing change id=${change.id} " +
+                                "op=${change.operation} after $attempts attempts: " +
+                                change.payload.take(2000)
+                        )
+                        pendingChangeDao.deleteById(change.id)
+                    } else {
+                        pendingChangeDao.updateAttempts(change.id, attempts)
+                        break
+                    }
+                }
             }
         }
         return SyncResult(synced, changes.size - synced)
     }
 
-    private suspend fun replay(change: PendingChangeEntity, remap: MutableMap<Int, Int>): Boolean {
+    private suspend fun replay(change: PendingChangeEntity, remap: MutableMap<Int, Int>): ReplayResult {
         return try {
             when (change.operation) {
                 PendingOperation.CREATE_LESSON -> {
@@ -364,18 +423,22 @@ class SyncManager @Inject constructor(
                 PendingOperation.DELETE_HOMEWORK -> {
                     val p = gson.fromJson(change.payload, DeleteHomeworkPayload::class.java)
                     val resp = api.homeworkDelete(p.homeworkId)
-                    if (!resp.isSuccessful) return false
+                    if (!resp.isSuccessful) return failure(resp)
                     p.lessonId?.takeIf { it != 0 }?.let { refreshLessonDetail(it) }
-                    true
+                    ReplayResult.SUCCESS
                 }
-                else -> false
+                else -> ReplayResult.FAILURE
             }
         } catch (e: Exception) {
-            false
+            ReplayResult.FAILURE
         }
     }
 
-    private suspend fun replayCreateLesson(p: CreateLessonPayload, remap: MutableMap<Int, Int>): Boolean {
+    /** 401 означает протухшую сессию — передаём отдельным результатом. */
+    private fun failure(resp: retrofit2.Response<*>): ReplayResult =
+        if (resp.code() == 401) ReplayResult.AUTH_FAILURE else ReplayResult.FAILURE
+
+    private suspend fun replayCreateLesson(p: CreateLessonPayload, remap: MutableMap<Int, Int>): ReplayResult {
         val body = HashMap<String, Any>().apply {
             put("class_id", p.classId)
             put("subject_id", p.subjectId)
@@ -385,29 +448,29 @@ class SyncManager @Inject constructor(
             if (p.note.isNotEmpty()) put("note", p.note)
         }
         val resp = api.lessonCreate(body)
-        if (!resp.isSuccessful) return false
+        if (!resp.isSuccessful) return failure(resp)
         val newId = resp.body()?.get("id") ?: 0
-        if (newId == 0) return false
+        if (newId == 0) return ReplayResult.FAILURE
         remap[p.localLessonId] = newId
         migrateLocalLesson(p.localLessonId, newId)
         refreshLessonDetail(newId)
-        return true
+        return ReplayResult.SUCCESS
     }
 
-    private suspend fun replaySaveMarks(p: SaveMarksPayload, remap: MutableMap<Int, Int>): Boolean {
+    private suspend fun replaySaveMarks(p: SaveMarksPayload, remap: MutableMap<Int, Int>): ReplayResult {
         val lessonId = remap[p.lessonId] ?: p.lessonId
         val body = HashMap<String, Any>()
         body["marks"] = p.marks.mapValues { (_, list) ->
             list.map { mapOf("value" to it.value, "work_type" to it.workType, "comment" to it.comment) }
         }
         val resp = api.marksSave(lessonId, body)
-        if (!resp.isSuccessful) return false
+        if (!resp.isSuccessful) return failure(resp)
         refreshLessonDetail(lessonId)
         refreshClassJournalForLesson(lessonId)
-        return true
+        return ReplayResult.SUCCESS
     }
 
-    private suspend fun replaySaveAttendance(p: SaveAttendancePayload, remap: MutableMap<Int, Int>): Boolean {
+    private suspend fun replaySaveAttendance(p: SaveAttendancePayload, remap: MutableMap<Int, Int>): ReplayResult {
         val lessonId = remap[p.lessonId] ?: p.lessonId
         val body = HashMap<String, Any>()
         body["attendance"] = p.attendance.mapValues { (_, a) ->
@@ -417,26 +480,26 @@ class SyncManager @Inject constructor(
             }
         }
         val resp = api.attendanceSave(lessonId, body)
-        if (!resp.isSuccessful) return false
+        if (!resp.isSuccessful) return failure(resp)
         refreshLessonDetail(lessonId)
         refreshClassJournalForLesson(lessonId)
-        return true
+        return ReplayResult.SUCCESS
     }
 
-    private suspend fun replaySaveRemarks(p: SaveRemarksPayload, remap: MutableMap<Int, Int>): Boolean {
+    private suspend fun replaySaveRemarks(p: SaveRemarksPayload, remap: MutableMap<Int, Int>): ReplayResult {
         val lessonId = remap[p.lessonId] ?: p.lessonId
         val body = HashMap<String, Any>().apply {
             put("remarks", p.remarks)
             if (p.removeIds.isNotEmpty()) put("remove_ids", p.removeIds)
         }
         val resp = api.remarksSave(lessonId, body)
-        if (!resp.isSuccessful) return false
+        if (!resp.isSuccessful) return failure(resp)
         refreshLessonDetail(lessonId)
         refreshClassJournalForLesson(lessonId)
-        return true
+        return ReplayResult.SUCCESS
     }
 
-    private suspend fun replaySaveHomework(p: SaveHomeworkPayload, remap: MutableMap<Int, Int>): Boolean {
+    private suspend fun replaySaveHomework(p: SaveHomeworkPayload, remap: MutableMap<Int, Int>): ReplayResult {
         val lessonId = remap[p.lessonId] ?: p.lessonId
         val body = HashMap<String, Any>().apply {
             put("title", p.title)
@@ -444,9 +507,9 @@ class SyncManager @Inject constructor(
             put("due_date", p.dueDate)
         }
         val resp = api.homeworkSave(lessonId, body)
-        if (!resp.isSuccessful) return false
+        if (!resp.isSuccessful) return failure(resp)
         refreshLessonDetail(lessonId)
-        return true
+        return ReplayResult.SUCCESS
     }
 
     private suspend fun replayDeleteHomework(p: DeleteHomeworkPayload): Boolean {
@@ -491,5 +554,9 @@ class SyncManager @Inject constructor(
         } catch (e: Exception) {
             // Не критично.
         }
+    }
+
+    private companion object {
+        const val TAG = "SyncManager"
     }
 }

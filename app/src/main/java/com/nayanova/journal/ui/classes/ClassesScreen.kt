@@ -140,7 +140,11 @@ fun ClassesScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    val classSubjects = subjects[selectedClassId] ?: emptyList()
+                    val classSubjects = viewModel.displaySubjects(
+                            selectedClassId ?: 0,
+                            classes,
+                            subjects[selectedClassId] ?: emptyList()
+                        )
                     val classSubjectsLoading = subjectsLoading.contains(selectedClassId)
                     val classSubjectsError = subjectsError[selectedClassId]
                     when {
@@ -182,7 +186,7 @@ fun ClassesScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 modifier = Modifier.heightIn(max = 400.dp)
                             ) {
-                                items(classSubjects) { subject ->
+                                items(classSubjects) { item ->
                                     Card(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -190,9 +194,9 @@ fun ClassesScreen(
                                                 val cls = classes.find { it.id == selectedClassId }
                                                 onClassSelected(
                                                     selectedClassId!!,
-                                                    subject.id,
+                                                    item.subject.id,
                                                     cls?.name ?: "",
-                                                    subject.name
+                                                    item.label
                                                 )
                                             },
                                         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -211,7 +215,7 @@ fun ClassesScreen(
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = subject.name,
+                                                text = item.label,
                                                 style = MaterialTheme.typography.bodyLarge
                                             )
                                         }

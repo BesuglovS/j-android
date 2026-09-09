@@ -59,6 +59,18 @@ interface CacheDao {
     @Query("SELECT * FROM students WHERE classId = :classId ORDER BY lastName, firstName")
     suspend fun getStudents(classId: Int): List<StudentEntity>
 
+    @Query(
+        "SELECT s.* FROM students s JOIN class_students cs ON cs.studentId = s.id " +
+            "WHERE cs.classId = :classId AND s.isActive = 1 ORDER BY s.lastName, s.firstName"
+    )
+    suspend fun getStudentsForClass(classId: Int): List<StudentEntity>
+
+    @Query("DELETE FROM class_students WHERE classId = :classId")
+    suspend fun clearClassStudents(classId: Int)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertClassStudents(refs: List<ClassStudentRefEntity>)
+
     @Query("DELETE FROM students")
     suspend fun clearStudents()
 

@@ -3,6 +3,7 @@ package com.nayanova.journal.ui.lessons
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nayanova.journal.data.model.Lesson
+import com.nayanova.journal.data.model.Subject
 import com.nayanova.journal.data.repository.JournalRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,10 +28,20 @@ class LessonsViewModel @Inject constructor(
     private val _createSuccess = MutableStateFlow<Int?>(null)
     val createSuccess = _createSuccess.asStateFlow()
 
+    /** Заголовок объединённого предмета (когда открыт «Информатика и Труд»). */
+    private val _title = MutableStateFlow<String?>(null)
+    val title = _title.asStateFlow()
+
+    /** Варианты предмета для создания урока в объединённом журнале (пусто — обычный предмет). */
+    private val _subjectOptions = MutableStateFlow<List<Subject>>(emptyList())
+    val subjectOptions = _subjectOptions.asStateFlow()
+
     fun loadLessons(classId: Int, subjectId: Int) {
         viewModelScope.launch {
             _isLoading.value = true
-            when (val result = repository.lessons(classId, subjectId)) {
+            _title.value = repository.subjectGroupLabel(classId, subjectId)
+            _subjectOptions.value = resolveSubjectOptions(classId, subjectId)
+            when (val result = repository.mergedLessons(classId, subjectId)) {
                 is JournalRepository.Result.Success -> {
                     _lessons.value = result.data
                 }
@@ -40,6 +51,18 @@ class LessonsViewModel @Inject constructor(
             }
             _isLoading.value = false
         }
+    }
+
+    /** Для объединённого предмета — оба предмета (для выбора при создании урока). */
+    private suspend fun resolveSubjectOptions(classId: Int, subjectId: Int): List<Subject> {
+        val group = repository.subjectGroup(classId) ?: return emptyList()
+        if (subjectId !in com.nayanova.journal.util.SubjectMerge.subjectIds(group)) return emptyList()
+        val subjects = when (val r = repository.classSubjects(classId)) {
+            is JournalRepository.Result.Success -> r.data
+            is JournalRepository.Result.Error -> return emptyList()
+        }
+        return subjects.filter { it.id == group.informatics.id || it.id == group.trud.id }
+            .sortedBy { it.name }
     }
 
     fun createLesson(classId: Int, subjectId: Int, date: String, startTime: String, topic: String) {

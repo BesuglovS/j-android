@@ -24,6 +24,10 @@ class ClassJournalViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
 
+    /** Заголовок объединённого предмета («Информатика и Труд»), если применимо. */
+    private val _title = MutableStateFlow<String?>(null)
+    val title = _title.asStateFlow()
+
     private var currentClassId: Int = 0
     private var currentSubjectId: Int = 0
 
@@ -33,7 +37,8 @@ class ClassJournalViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
-            when (val result = repository.classJournal(classId, subjectId)) {
+            _title.value = repository.subjectGroupLabel(classId, subjectId)
+            when (val result = repository.mergedClassJournal(classId, subjectId)) {
                 is JournalRepository.Result.Success -> {
                     _data.value = result.data
                 }

@@ -34,6 +34,8 @@ fun LessonsScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
     val createSuccess by viewModel.createSuccess.collectAsState()
+    val title by viewModel.title.collectAsState()
+    val subjectOptions by viewModel.subjectOptions.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(classId, subjectId) {
@@ -50,7 +52,7 @@ fun LessonsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("$className — $subjectName") },
+                title = { Text(title ?: "$className — $subjectName") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад", tint = MaterialTheme.colorScheme.onPrimary)
@@ -174,9 +176,11 @@ fun LessonsScreen(
 
     if (showCreateDialog) {
         CreateLessonDialog(
+            subjectOptions = subjectOptions,
+            defaultSubjectId = subjectId,
             onDismiss = { showCreateDialog = false },
-            onCreate = { date, startTime, topic ->
-                viewModel.createLesson(classId, subjectId, date, startTime, topic)
+            onCreate = { chosenSubjectId, date, startTime, topic ->
+                viewModel.createLesson(classId, chosenSubjectId, date, startTime, topic)
                 showCreateDialog = false
             }
         )
@@ -185,18 +189,35 @@ fun LessonsScreen(
 
 @Composable
 fun CreateLessonDialog(
+    subjectOptions: List<com.nayanova.journal.data.model.Subject> = emptyList(),
+    defaultSubjectId: Int = -1,
     onDismiss: () -> Unit,
-    onCreate: (date: String, startTime: String, topic: String) -> Unit
+    onCreate: (subjectId: Int, date: String, startTime: String, topic: String) -> Unit
 ) {
     var date by remember { mutableStateOf(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)) }
     var startTime by remember { mutableStateOf("") }
     var topic by remember { mutableStateOf("") }
+    var selectedSubjectId by remember(subjectOptions, defaultSubjectId) {
+        mutableStateOf(subjectOptions.firstOrNull()?.id ?: defaultSubjectId)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Новый урок") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (subjectOptions.size > 1) {
+                    Text("Предмет", style = MaterialTheme.typography.titleSmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        subjectOptions.forEach { subject ->
+                            FilterChip(
+                                selected = selectedSubjectId == subject.id,
+                                onClick = { selectedSubjectId = subject.id },
+                                label = { Text(subject.name) }
+                            )
+                        }
+                    }
+                }
                 OutlinedTextField(
                     value = date,
                     onValueChange = { date = it },
@@ -220,7 +241,9 @@ fun CreateLessonDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onCreate(date, startTime, topic) }) {
+            Button(onClick = {
+                onCreate(selectedSubjectId, date, startTime, topic)
+            }) {
                 Text("Создать")
             }
         },

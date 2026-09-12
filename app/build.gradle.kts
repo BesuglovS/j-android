@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "com.nayanova.journal"
+    namespace = "ru.nayanovaacademy.journal"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.nayanova.journal"
+        applicationId = "ru.nayanovaacademy.journal"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

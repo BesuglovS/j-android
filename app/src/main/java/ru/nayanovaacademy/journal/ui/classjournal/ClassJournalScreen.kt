@@ -66,14 +66,14 @@ fun ClassJournalScreen(
                     title = {
                         Column {
                             Text(
-                                "Р–СѓСЂРЅР°Р»: $className вЂ” ${title ?: subjectName}",
+                                "Журнал: $className — ${title ?: subjectName}",
                                 style = MaterialTheme.typography.titleMedium
                             )
                         }
                     },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "РќР°Р·Р°Рґ", tint = MaterialTheme.colorScheme.onPrimary)
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -82,7 +82,7 @@ fun ClassJournalScreen(
                     ),
                     actions = {
                         IconButton(onClick = { viewModel.load(classId, subjectId) }) {
-                            Icon(Icons.Default.Refresh, "РћР±РЅРѕРІРёС‚СЊ", tint = MaterialTheme.colorScheme.onPrimary)
+                            Icon(Icons.Default.Refresh, "Обновить", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
                 )
@@ -108,14 +108,14 @@ fun ClassJournalScreen(
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(onClick = { viewModel.load(classId, subjectId) }) {
-                            Text("РџРѕРІС‚РѕСЂРёС‚СЊ")
+                            Text("Повторить")
                         }
                     }
                 }
             }
             data == null || data!!.lessons.isEmpty() -> {
                 Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    Text("РќРµС‚ РґР°РЅРЅС‹С… Р·Р° С‚РµРєСѓС‰СѓСЋ С‡РµС‚РІРµСЂС‚СЊ", style = MaterialTheme.typography.bodyLarge)
+                    Text("Нет данных за текущую четверть", style = MaterialTheme.typography.bodyLarge)
                 }
             }
             else -> {
@@ -168,27 +168,27 @@ private fun ClassJournalTable(
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            LegendItem(color = COLOR_PRESENT, text = "Р‘С‹Р»")
-            LegendItem(color = COLOR_ABSENT, text = "Рќ (РЅРµ Р±С‹Р»)")
-            LegendItem(color = COLOR_LATE, text = "РћРїРѕР·РґР°Р»")
+            LegendItem(color = COLOR_PRESENT, text = "Был")
+            LegendItem(color = COLOR_ABSENT, text = "Н (не был)")
+            LegendItem(color = COLOR_LATE, text = "Опоздал")
         }
 
         val verticalScroll = rememberScrollState()
         val horizontalScroll = rememberScrollState()
 
-        // Р’РЅРµС€РЅРёР№ Row: РІРµСЂС‚РёРєР°Р»СЊРЅС‹Р№ СЃРєСЂРѕР»Р» РѕС…РІР°С‚С‹РІР°РµС‚ РІСЃСЋ С‚Р°Р±Р»РёС†Сѓ,
-        // Р»РµРІР°СЏ РєРѕР»РѕРЅРєР° РёРјС‘РЅ С„РёРєСЃРёСЂРѕРІР°РЅР°, РїСЂР°РІР°СЏ СЃРєСЂРѕР»Р»РёС‚СЃСЏ РїРѕ РіРѕСЂРёР·РѕРЅС‚Р°Р»Рё.
+        // Внешний Row: вертикальный скролл охватывает всю таблицу,
+        // левая колонка имён фиксирована, правая скроллится по горизонтали.
         Row(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(verticalScroll)
         ) {
-            // ---- Р¤РёРєСЃРёСЂРѕРІР°РЅРЅР°СЏ Р»РµРІР°СЏ РєРѕР»РѕРЅРєР°: РёРјРµРЅР° СѓС‡РµРЅРёРєРѕРІ ----
+            // ---- Фиксированная левая колонка: имена учеников ----
             Column(
                 modifier = Modifier
                     .background(MaterialTheme.colorScheme.background)
             ) {
-                // Header "РЈС‡РµРЅРёРє"
+                // Header "Ученик"
                 Box(
                     modifier = Modifier
                         .width(studentColWidth)
@@ -199,7 +199,7 @@ private fun ClassJournalTable(
                     contentAlignment = Alignment.CenterStart
                 ) {
                     Text(
-                        "РЈС‡РµРЅРёРє",
+                        "Ученик",
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp
                     )
@@ -228,11 +228,11 @@ private fun ClassJournalTable(
                 }
             }
 
-            // ---- РџСЂР°РІР°СЏ РїСЂРѕРєСЂСѓС‡РёРІР°РµРјР°СЏ С‡Р°СЃС‚СЊ: РґР°С‚С‹ Р·Р°РЅСЏС‚РёР№ + СЃСЂРµРґРЅСЏСЏ ----
+            // ---- Правая прокручиваемая часть: даты занятий + средняя ----
             Column(
                 modifier = Modifier.horizontalScroll(horizontalScroll)
             ) {
-                // Header row: date headers + "РЎСЂРµРґРЅ."
+                // Header row: date headers + "Средн."
                 Row(
                     modifier = Modifier
                         .background(MaterialTheme.colorScheme.primaryContainer)
@@ -269,7 +269,7 @@ private fun ClassJournalTable(
                         }
                     }
 
-                    // "РЎСЂРµРґРЅСЏСЏ" header (СЃР°РјС‹Р№ РїСЂР°РІС‹Р№ СЃС‚РѕР»Р±РµС†)
+                    // "Средняя" header (самый правый столбец)
                     Box(
                         modifier = Modifier
                             .width(avgColWidth)
@@ -278,7 +278,7 @@ private fun ClassJournalTable(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            "РЎСЂРµРґРЅ.",
+                            "Средн.",
                             fontWeight = FontWeight.Bold,
                             fontSize = 10.sp,
                             textAlign = TextAlign.Center
@@ -336,14 +336,14 @@ private fun ClassJournalTable(
                             ) {
                                 if (status == "absent") {
                                     Text(
-                                        "Рќ",
+                                        "Н",
                                         fontSize = 16.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = COLOR_ABSENT
                                     )
                                 } else {
-                                    // РћС†РµРЅРєРё РєР»РµС‚РєРё (РѕРґРЅР° СЃС‚СЂРѕРєР°): РёС‚РѕРіРѕРІС‹Рµ РїРѕРїС‹С‚РєРё РєСЂСѓРїРЅРѕ,
-                                    // СЃС‚Р°СЂС‹Рµ (РїРµСЂРµРїРёСЃР°РЅРЅС‹Рµ) вЂ” СЃСЂР°Р·Сѓ Р·Р° РЅРёРјРё РјРµРЅСЊС€РёРј С€СЂРёС„С‚РѕРј
+                                    // Оценки клетки (одна строка): итоговые попытки крупно,
+                                    // старые (переписанные) — сразу за ними меньшим шрифтом
                                     if (studentMarks.isNotEmpty()) {
                                         val finals = studentMarks.filter { it.isCurrent == 1 }
                                         val stales = studentMarks.filter { it.isCurrent != 1 }
@@ -382,7 +382,7 @@ private fun ClassJournalTable(
                                         val mins = studentAttendance?.lateMinutes ?: 0
                                         if (mins > 0) {
                                             Text(
-                                                "${mins}Рј",
+                                                "${mins}м",
                                                 fontSize = 10.sp,
                                                 color = COLOR_LATE
                                             )
@@ -392,7 +392,7 @@ private fun ClassJournalTable(
                             }
                         }
 
-                        // Average grade cell (СЃР°РјС‹Р№ РїСЂР°РІС‹Р№ СЃС‚РѕР»Р±РµС†)
+                        // Average grade cell (самый правый столбец)
                         val studentAvg = averageMark(marks, student.id)
                         Box(
                             modifier = Modifier
@@ -409,7 +409,7 @@ private fun ClassJournalTable(
                                 )
                             } else {
                                 Text(
-                                    "вЂ”",
+                                    "—",
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -421,15 +421,15 @@ private fun ClassJournalTable(
         }
     }
 
-    // Р”РёР°Р»РѕРі РѕС†РµРЅРѕРє (РєР°Рє РЅР° СЌРєСЂР°РЅРµ Р·Р°РЅСЏС‚РёСЏ): СЃРїРёСЃРѕРє РѕС†РµРЅРѕРє СЃ СѓРґР°Р»РµРЅРёРµРј + РґРѕР±Р°РІР»РµРЅРёРµ 2вЂ“5.
-    // РћС‚РєСЂС‹РІР°РµС‚СЃСЏ РґРѕР»РіРёРј РЅР°Р¶Р°С‚РёРµРј РЅР° СЏС‡РµР№РєСѓ СѓС‡РµРЅРёРє Г— Р·Р°РЅСЏС‚РёРµ.
+    // Диалог оценок (как на экране занятия): список оценок с удалением + добавление 2–5.
+    // Открывается долгим нажатием на ячейку ученик × занятие.
     val dialogStudent = markDialogStudent
     val dialogLesson = markDialogLesson
     if (dialogStudent != null && dialogLesson != null) {
         val lessonKey = dialogLesson.id.toString()
         val studentKey = dialogStudent.id.toString()
         val lessonMarks = marks[lessonKey]?.get(studentKey) ?: emptyList()
-        // РС‚РѕРіРѕРІС‹Рµ РїРѕРїС‹С‚РєРё СѓС‡РµРЅРёРєР° РїРѕ РїСЂРµРґРјРµС‚Сѓ (РІСЃРµ СѓСЂРѕРєРё Р¶СѓСЂРЅР°Р»Р°)
+        // Итоговые попытки ученика по предмету (все уроки журнала)
         val subjectCurrentMarks = marks.values.flatMap { it[studentKey] ?: emptyList() }
             .filter { it.isCurrent == 1 && it.value in 2..5 }
         MarkDialog(
@@ -482,8 +482,8 @@ private fun formatLessonDate(dateStr: String): String {
     }
 }
 
-/** РЎСЂРµРґРЅСЏСЏ РѕС†РµРЅРєР° СѓС‡РµРЅРёРєР° Р·Р° С‡РµС‚РІРµСЂС‚СЊ: С‚РѕР»СЊРєРѕ РёС‚РѕРіРѕРІС‹Рµ РїРѕРїС‹С‚РєРё (РїРѕСЃР»РµРґРЅРµРµ
- *  РїРµСЂРµРїРёСЃС‹РІР°РЅРёРµ) РєР°Р¶РґРѕР№ СЂР°Р±РѕС‚С‹. РЎС‚Р°СЂС‹МЃРµ (РїРµСЂРµРїРёСЃР°РЅРЅС‹Рµ) РЅРµ СѓС‡Р°СЃС‚РІСѓСЋС‚. */
+/** Средняя оценка ученика за четверть: только итоговые попытки (последнее
+ *  переписывание) каждой работы. Стары́е (переписанные) не участвуют. */
 private fun averageMark(
     marks: Map<String, Map<String, List<ru.nayanovaacademy.journal.data.model.Mark>>>,
     studentId: Int

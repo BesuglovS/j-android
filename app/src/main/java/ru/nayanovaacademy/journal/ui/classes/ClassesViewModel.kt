@@ -92,20 +92,17 @@ class ClassesViewModel @Inject constructor(
     }
 
     /**
-     * Предметы класса для экрана выбора: в 9 классе с «Информатикой»
-     * и «Трудом (технологией)» пара показывается одной карточкой.
+     * Предметы класса для экрана выбора: если у класса есть объединённый
+     * предмет («Информатика и Труд» в 9-х, «Информатика и моделирование +
+     * Пилотирование БПЛА» в 8-х), пара показывается одной карточкой.
      */
     fun displaySubjects(classId: Int, classes: List<SchoolClass>, subjects: List<Subject>): List<SubjectItem> {
         if (subjects.isEmpty()) return emptyList()
-        val cls = classes.firstOrNull { it.id == classId }
-        if (cls == null || !SubjectMerge.isNinthGrade(cls.grade, cls.name)) {
-            return subjects.map { SubjectItem(it) }
-        }
-        val pair = SubjectMerge.findPair(subjects)
-        if (pair == null) return subjects.map { SubjectItem(it) }
-        val (inf, trud) = pair
+        val cls = classes.firstOrNull { it.id == classId } ?: return subjects.map { SubjectItem(it) }
+        val pair = SubjectMerge.findPair(cls.grade, cls.name, subjects) ?: return subjects.map { SubjectItem(it) }
+        val (first, second) = pair
         return subjects
-            .filter { it.id != trud.id }
-            .map { if (it.id == inf.id) SubjectItem(inf, trud) else SubjectItem(it) }
+            .filter { it.id != second.id }
+            .map { if (it.id == first.id) SubjectItem(first, second) else SubjectItem(it) }
     }
 }

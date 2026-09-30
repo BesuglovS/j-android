@@ -3,26 +3,30 @@ package ru.nayanovaacademy.journal.util
 import ru.nayanovaacademy.journal.data.model.Subject
 
 /**
- * Объединение «Информатика» и «Труд (технология)» в один предмет для классов
- * преподавателя Безуглова С.В. Уроки, оценки, посещаемость и средняя считаются
- * общими, ДЗ показывается на ближайшем из двух видов уроков.
+ * Объединение предметов в один. Поддерживаются две пары:
+ * 1) «Информатика» + «Труд (технология)» в 9 классах (преподаватель
+ *    Безуглова С.В.);
+ * 2) «Информатика» + «Моделирование и пилотирование беспилотных
+ *    авиационных систем» в 8 классах.
  *
- * Определение применяется только для 9 классов, у которых в списке предметов
- * присутствуют оба предмета пары.
+ * Уроки, оценки, посещаемость и средняя считаются общими, ДЗ показывается
+ * на ближайшем из двух видов уроков. Пара применяется к классу, только если
+ * в его списке предметов присутствуют оба предмета пары.
  */
 object SubjectMerge {
 
     /** Пара предметов одного объединённого предмета в конкретном классе. */
     data class SubjectGroup(
         val classId: Int,
-        val informatics: Subject,
-        val trud: Subject
+        val first: Subject,
+        val second: Subject
     ) {
-        val label: String get() = displayName(informatics, trud)
+        val label: String get() = displayName(first, second)
     }
 
     private const val INFORMATICS_NAME = "ИНФОРМАТИКА"
     private const val TRUD_PREFIX = "ТРУД"
+    private const val UAV_SYSTEMS_PREFIX = "МОДЕЛИРОВАНИЕИПИЛОТИРОВАНИЕ"
 
     fun normalize(s: String): String =
         s.uppercase().replace('Ё', 'Е').filter { !it.isWhitespace() }
@@ -32,6 +36,13 @@ object SubjectMerge {
         if (grade == 9) return true
         if (grade != null) return false
         return normalize(className ?: "").startsWith("9")
+    }
+
+    /** 8 класс: по полю grade или по названию («8А», «8 А»). */
+    fun isEighthGrade(grade: Int?, className: String?): Boolean {
+        if (grade == 8) return true
+        if (grade != null) return false
+        return normalize(className ?: "").startsWith("8")
     }
 
     fun isInformatics(subject: Subject): Boolean {
@@ -46,16 +57,35 @@ object SubjectMerge {
         return key.startsWith(TRUD_PREFIX) || short.startsWith(TRUD_PREFIX) || key.contains("ТЕХНОЛОГИЯ") || short.contains("ТЕХНОЛОГИЯ")
     }
 
-    /** Возвращает пару (Информатика, Труд), если в классе есть оба предмета. */
-    fun findPair(subjects: List<Subject>): Pair<Subject, Subject>? {
-        val informatics = subjects.firstOrNull { isInformatics(it) } ?: return null
-        val trud = subjects.firstOrNull { isTrudTechnology(it) } ?: return null
-        return informatics to trud
+    fun isUavSystems(subject: Subject): Boolean {
+        val key = normalize(subject.name)
+        val short = normalize(subject.shortName ?: "")
+        return key.contains(UAV_SYSTEMS_PREFIX) || short.contains(UAV_SYSTEMS_PREFIX)
     }
 
-    /** Объединённое название предмета: «Информатика и Труд (технология)». */
-    fun displayName(informatics: Subject, trud: Subject): String =
-        "${informatics.name} и ${trud.name}"
+    /**
+     * Пара предметов объединённого предмета для класса: в 9 классах —
+     * (Информатика, Труд), в 8 классах — (Информатика, Моделирование
+     * и пилотирование беспилотных авиационных систем). Возвращает null,
+     * если класс без объединения или в его списке нет обоих предметов пары.
+     */
+    fun findPair(grade: Int?, className: String?, subjects: List<Subject>): Pair<Subject, Subject>? {
+        if (isNinthGrade(grade, className)) {
+            val informatics = subjects.firstOrNull { isInformatics(it) } ?: return null
+            val trud = subjects.firstOrNull { isTrudTechnology(it) } ?: return null
+            return informatics to trud
+        }
+        if (isEighthGrade(grade, className)) {
+            val informatics = subjects.firstOrNull { isInformatics(it) } ?: return null
+            val uav = subjects.firstOrNull { isUavSystems(it) } ?: return null
+            return informatics to uav
+        }
+        return null
+    }
 
-    fun subjectIds(group: SubjectGroup): Set<Int> = setOf(group.informatics.id, group.trud.id)
+    /** Объединённое название предмета: «A и B». */
+    fun displayName(first: Subject, second: Subject): String =
+        "${first.name} и ${second.name}"
+
+    fun subjectIds(group: SubjectGroup): Set<Int> = setOf(group.first.id, group.second.id)
 }

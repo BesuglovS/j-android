@@ -61,7 +61,7 @@ class LessonsViewModel @Inject constructor(
             is JournalRepository.Result.Success -> r.data
             is JournalRepository.Result.Error -> return emptyList()
         }
-        return subjects.filter { it.id == group.informatics.id || it.id == group.trud.id }
+        return subjects.filter { it.id == group.first.id || it.id == group.second.id }
             .sortedBy { it.name }
     }
 

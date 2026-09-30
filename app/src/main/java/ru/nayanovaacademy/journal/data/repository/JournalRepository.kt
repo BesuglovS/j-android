@@ -276,8 +276,9 @@ class JournalRepository @Inject constructor(
     }
 
     /**
-     * Для объединённого предмета «Информатика + Труд» ДЗ предыдущего урока —
-     * это ДЗ ближайшего предыдущего занятия из ОБОИХ предметов, а не только
+     * Для объединённого предмета («Информатика + Труд», «Информатика
+     * и моделирование + Пилотирование БПЛА») ДЗ предыдущего урока — это ДЗ
+     * ближайшего предыдущего занятия из ОБОИХ предметов, а не только
      * того же предмета. Так задание, выданное на одном виде урока, показывается
      * на ближайшем следующем (сдача и оценка «ДЗ»).
      */
@@ -631,26 +632,28 @@ class JournalRepository @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Объединённый предмет «Информатика + Труд (технология)» (9 классы).
+    // Объединённые предметы: «Информатика + Труд (технология)» (9 классы),
+    // «Информатика и моделирование + Пилотирование БПЛА» (8 классы).
     // ------------------------------------------------------------------
 
     /**
      * Пара предметов, объединяемых в один, для данного класса.
-     * Возвращается только для 9 классов, в которых есть и «Информатика»,
-     * и «Труд (технология)» (это приложение преподавателя Безуглова С.В.).
+     * Для 9 классов — «Информатика» + «Труд (технология)» (приложение
+     * преподавателя Безуглова С.В.), для 8 классов — «Информатика
+     * и моделирование» + «Пилотирование БПЛА». Возвращается, только если
+     * в списке предметов класса есть оба предмета пары.
      */
     suspend fun subjectGroup(classId: Int): SubjectGroup? {
         val cls = when (val r = classes()) {
             is Result.Success -> r.data.firstOrNull { it.id == classId }
             is Result.Error -> null
         } ?: return null
-        if (!SubjectMerge.isNinthGrade(cls.grade, cls.name)) return null
 
         val subjects = when (val r = classSubjects(classId)) {
             is Result.Success -> r.data
             is Result.Error -> return null
         }
-        val pair = SubjectMerge.findPair(subjects) ?: return null
+        val pair = SubjectMerge.findPair(cls.grade, cls.name, subjects) ?: return null
         return SubjectGroup(classId, pair.first, pair.second)
     }
 
@@ -668,8 +671,8 @@ class JournalRepository @Inject constructor(
         val group = subjectGroup(classId) ?: return lessons(classId, subjectId)
         if (subjectId !in subjectIds(group)) return lessons(classId, subjectId)
 
-        val r1 = lessons(classId, group.informatics.id)
-        val r2 = lessons(classId, group.trud.id)
+        val r1 = lessons(classId, group.first.id)
+        val r2 = lessons(classId, group.second.id)
         val l1 = (r1 as? Result.Success)?.data
         val l2 = (r2 as? Result.Success)?.data
         if (l1 == null && l2 == null) return r1
@@ -694,8 +697,8 @@ class JournalRepository @Inject constructor(
         val group = subjectGroup(classId) ?: return classJournal(classId, subjectId)
         if (subjectId !in subjectIds(group)) return classJournal(classId, subjectId)
 
-        val r1 = classJournal(classId, group.informatics.id)
-        val r2 = classJournal(classId, group.trud.id)
+        val r1 = classJournal(classId, group.first.id)
+        val r2 = classJournal(classId, group.second.id)
         val d1 = (r1 as? Result.Success)?.data
         val d2 = (r2 as? Result.Success)?.data
         if (d1 == null && d2 == null) return r1

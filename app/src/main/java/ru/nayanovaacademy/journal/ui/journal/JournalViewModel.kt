@@ -104,6 +104,58 @@ class JournalViewModel @Inject constructor(
         _localRemarks.value = remarks
     }
 
+    /** Среди попыток одной работы сделать итоговой последнюю по дате пересдачи
+     *  (при пустой дате — по дате урока), затем по признаку переписывания и id. */
+    private fun markLatestCurrent(list: List<LocalMark>, workType: String): List<LocalMark> {
+        val fallbackDate = _detail.value?.lesson?.date ?: ""
+        val latestIndex = list.indices
+            .filter { list[it].workType == workType }
+            .maxWithOrNull(
+                compareBy<Int>(
+                    { list[it].attemptDate.ifBlank { fallbackDate } },
+                    { list[it].isRetake },
+                    { list[it].id }
+                )
+            ) ?: return list
+        return list.mapIndexed { i, m ->
+            if (m.workType == workType) m.copy(isCurrent = i == latestIndex) else m
+        }
+    }
+
+    /** Обновить локальный current_marks урока под только что изменённые оценки,
+     *  сохранив итоговые оценки других уроков предмета. */
+    private fun updateCurrentMarksLocally() {
+        val detail = _detail.value ?: return
+        val rebuilt = (detail.currentMarks ?: emptyMap())
+            .mapValues { (_, list) -> list.filter { it.lessonId != currentLessonId } }
+            .toMutableMap()
+        for ((sid, list) in _localMarks.value) {
+            val key = sid.toString()
+            val keep = rebuilt[key].orEmpty().toMutableList()
+            val byType = LinkedHashMap<String, MutableList<LocalMark>>()
+            list.forEach { byType.getOrPut(it.workType) { mutableListOf() }.add(it) }
+            for ((workType, attempts) in byType) {
+                val current = attempts.lastOrNull { it.isCurrent } ?: attempts.lastOrNull() ?: continue
+                if (current.value !in 2..5) continue
+                keep.add(
+                    CurrentMark(
+                        id = current.id,
+                        studentId = sid,
+                        value = current.value,
+                        workType = workType,
+                        comment = current.comment.ifBlank { null },
+                        lessonId = currentLessonId,
+                        lessonDate = detail.lesson.date,
+                        attemptDate = current.attemptDate.ifBlank { null },
+                        isRetake = if (current.isRetake) 1 else 0
+                    )
+                )
+            }
+            rebuilt[key] = keep
+        }
+        _detail.value = detail.copy(currentMarks = rebuilt)
+    }
+
     /** Добавить оценку (только 2–5) с указанием, за что она, и комментарием.
      *  retake=true — попытка переписывания: attemptDate (Y-m-d) — дата пересдачи;
      *  сервер привязывает её к уроку исходной оценки, после сохранения урок
@@ -112,9 +164,16 @@ class JournalViewModel @Inject constructor(
         if (value < 2 || value > 5) return
         val type = workType.ifBlank { "Урок" }
         val current = _localMarks.value.toMutableMap()
-        current[studentId] = (current[studentId] ?: emptyList()) +
-            LocalMark(value, type, comment, isRetake = retake, attemptDate = attemptDate)
+        val existing = current[studentId] ?: emptyList()
+        current[studentId] = if (retake) {
+            // Пересдача становится итоговой, прежняя попытка работы — в историю.
+            existing.map { if (it.workType == type) it.copy(isCurrent = false) else it } +
+                LocalMark(value, type, comment, isRetake = true, attemptDate = attemptDate)
+        } else {
+            existing + LocalMark(value, type, comment)
+        }
         _localMarks.value = current
+        updateCurrentMarksLocally()
         autoSaveMarks(retake)
     }
 
@@ -133,6 +192,7 @@ class JournalViewModel @Inject constructor(
             added++
         }
         _localMarks.value = current
+        updateCurrentMarksLocally()
         _saveMessage.value = "Оценки добавлены: $added"
         autoSaveMarks()
     }
@@ -149,8 +209,15 @@ class JournalViewModel @Inject constructor(
             map[studentId] = (map[studentId] ?: emptyList()) + removed.id
             _removeMarkIds.value = map
         }
-        current[studentId] = list.filterIndexed { i, _ -> i != index }
+        val remaining = list.filterIndexed { i, _ -> i != index }
+        // После удаления пересдачи исходная оценка снова становится итоговой.
+        current[studentId] = if (removed.isRetake) {
+            markLatestCurrent(remaining, removed.workType)
+        } else {
+            remaining
+        }
         _localMarks.value = current
+        updateCurrentMarksLocally()
         autoSaveMarks()
     }
 

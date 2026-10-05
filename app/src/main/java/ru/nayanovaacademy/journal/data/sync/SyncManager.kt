@@ -15,6 +15,7 @@ import ru.nayanovaacademy.journal.data.local.PendingOperation
 import ru.nayanovaacademy.journal.data.model.AttendanceRecord
 import ru.nayanovaacademy.journal.data.model.AttendanceEntry
 import ru.nayanovaacademy.journal.data.model.ClassJournalData
+import ru.nayanovaacademy.journal.data.model.CurrentMark
 import ru.nayanovaacademy.journal.data.model.Homework
 import ru.nayanovaacademy.journal.data.model.Lesson
 import ru.nayanovaacademy.journal.data.model.LessonDetail
@@ -217,7 +218,12 @@ class SyncManager @Inject constructor(
         // добавляемые/обновляемые по id (привязка к уроку исходной оценки —
         // на сервере); remove_mark_ids — явное удаление попыток.
         updateLessonDetail(lessonId) { detail ->
-            detail.copy(marks = updateLessonStudentMarks(detail.marks, lessonId, payload, detail.lesson.date))
+            val updated = updateLessonStudentMarks(detail.marks, lessonId, payload, detail.lesson.date)
+            val recomputed = recomputeLessonMarksCurrent(updated)
+            detail.copy(
+                marks = recomputed,
+                currentMarks = mergeCurrentMarks(detail.currentMarks, recomputed, detail.lesson)
+            )
         }
         updateClassJournalForLesson(lessonId) { data ->
             val lessonKey = lessonId.toString()
@@ -300,31 +306,75 @@ class SyncManager @Inject constructor(
     /** Локальный пересчёт is_current журнала: итоговая попытка группы
      *  (ученик, work_type) — с максимальной attempt_date; при равных датах
      *  приоритет у переписывания, затем по id. */
-    private fun recomputeClassJournalCurrent(data: ru.nayanovaacademy.journal.data.model.ClassJournalData): ru.nayanovaacademy.journal.data.model.ClassJournalData {
+    private fun recomputeClassJournalCurrent(data: ClassJournalData): ClassJournalData {
         var marks = data.marks
         for ((lessonKey, perStudent) in marks) {
             if (perStudent.isEmpty()) continue
-            val rebuilt = mutableMapOf<String, List<Mark>>()
-            for ((sid, list) in perStudent) {
-                val byType = LinkedHashMap<String, MutableList<Mark>>()
-                list.forEach { byType.getOrPut(it.workType) { mutableListOf() }.add(it) }
-                rebuilt[sid] = byType.values.flatMap { attempts ->
-                    val latest = attempts.maxWithOrNull(
-                        compareBy<Mark>(
-                            { it.attemptDate ?: "" },
-                            { it.isRetake },
-                            { it.id }
-                        )
-                    )
-                    attempts.map { m ->
-                        val flag = if (m.id == latest?.id) 1 else 0
-                        if (m.isCurrent == flag) m else m.copy(isCurrent = flag)
-                    }
-                }
-            }
+            val rebuilt = perStudent.mapValues { (_, list) -> recomputeListCurrent(list) }
             marks = marks + (lessonKey to rebuilt)
         }
         return data.copy(marks = marks)
+    }
+
+    /** Итоговая попытка группы (клетка work_type): последняя по attempt_date,
+     *  при равенстве — переписывание, затем по id. */
+    private fun recomputeListCurrent(list: List<Mark>): List<Mark> {
+        if (list.isEmpty()) return list
+        val byType = LinkedHashMap<String, MutableList<Mark>>()
+        list.forEach { byType.getOrPut(it.workType) { mutableListOf() }.add(it) }
+        return byType.values.flatMap { attempts ->
+            val latest = attempts.maxWithOrNull(
+                compareBy<Mark>({ it.attemptDate ?: "" }, { it.isRetake }, { it.id })
+            )
+            attempts.map { m ->
+                val flag = if (m.id == latest?.id) 1 else 0
+                if (m.isCurrent == flag) m else m.copy(isCurrent = flag)
+            }
+        }
+    }
+
+    /** Пересчёт is_current для оценок одного урока (map «studentId → список»). */
+    private fun recomputeLessonMarksCurrent(lessonMarks: Map<String, List<Mark>>): Map<String, List<Mark>> =
+        lessonMarks.mapValues { (_, list) -> recomputeListCurrent(list) }
+
+    /**
+     * Обновление current_marks урока после локальной правки: записи этого урока
+     * пересобираются из его оценок, записи других уроков предмета сохраняются.
+     * Так опция «Переписывание» видит только что выставленную оценку.
+     */
+    private fun mergeCurrentMarks(
+        existing: Map<String, List<CurrentMark>>?,
+        lessonMarks: Map<String, List<Mark>>,
+        lesson: Lesson
+    ): Map<String, List<CurrentMark>> {
+        val result = (existing ?: emptyMap())
+            .mapValues { (_, list) -> list.filter { it.lessonId != lesson.id } }
+            .toMutableMap()
+        for ((sidKey, list) in lessonMarks) {
+            val sid = sidKey.toIntOrNull() ?: continue
+            val keep = result[sidKey].orEmpty().toMutableList()
+            val byType = LinkedHashMap<String, MutableList<Mark>>()
+            list.forEach { byType.getOrPut(it.workType) { mutableListOf() }.add(it) }
+            for ((workType, attempts) in byType) {
+                val current = attempts.lastOrNull { it.isCurrent == 1 } ?: attempts.lastOrNull() ?: continue
+                if (current.value !in 2..5) continue
+                keep.add(
+                    CurrentMark(
+                        id = current.id,
+                        studentId = sid,
+                        value = current.value,
+                        workType = workType,
+                        comment = current.comment,
+                        lessonId = lesson.id,
+                        lessonDate = lesson.date,
+                        attemptDate = current.attemptDate,
+                        isRetake = current.isRetake
+                    )
+                )
+            }
+            result[sidKey] = keep
+        }
+        return result
     }
 
     suspend fun applyAttendance(lessonId: Int, payload: SaveAttendancePayload) {
@@ -455,8 +505,39 @@ class SyncManager @Inject constructor(
     suspend fun enqueueCreateLesson(payload: CreateLessonPayload) =
         enqueue(PendingOperation.CREATE_LESSON, payload, payload.localLessonId)
 
-    suspend fun enqueueSaveMarks(payload: SaveMarksPayload) =
-        enqueue(PendingOperation.SAVE_MARKS, payload, payload.lessonId)
+    /**
+     * Ставит в очередь снапшот оценок урока, схлопывая ещё не отправленные
+     * снапшоты этого же урока. Это нужно из-за семантики сервера: обычные
+     * оценки заменяют клетку, а пересдачи удаляются только явным
+     * remove_mark_ids. Без схлопывания офлайн-сохранение с последующим
+     * удалением пересдачи оставило бы её на сервере «сиротой» (её id ещё
+     * неизвестен, пока снапшот не отправлен). При слиянии: оценки — по
+     * ученикам «новее побеждает», remove_mark_ids объединяются.
+     */
+    suspend fun enqueueSaveMarks(payload: SaveMarksPayload) {
+        val pending = pendingChangeDao
+            .getByOperationAndLesson(PendingOperation.SAVE_MARKS, payload.lessonId)
+        var merged = payload
+        for (change in pending) {
+            val old = try {
+                gson.fromJson(change.payload, SaveMarksPayload::class.java)
+            } catch (e: Exception) {
+                null
+            }
+            if (old != null) merged = mergeSaveMarks(old, merged)
+        }
+        pending.forEach { pendingChangeDao.deleteById(it.id) }
+        enqueue(PendingOperation.SAVE_MARKS, merged, merged.lessonId)
+    }
+
+    private fun mergeSaveMarks(old: SaveMarksPayload, new: SaveMarksPayload): SaveMarksPayload {
+        val foldedMarks = old.marks + new.marks
+        val studentIds = old.removeMarkIds.keys + new.removeMarkIds.keys
+        val foldedRemove = studentIds.associateWith { sid ->
+            ((old.removeMarkIds[sid] ?: emptyList()) + (new.removeMarkIds[sid] ?: emptyList())).distinct()
+        }
+        return SaveMarksPayload(new.lessonId, foldedMarks, foldedRemove)
+    }
 
     suspend fun enqueueSaveAttendance(payload: SaveAttendancePayload) =
         enqueue(PendingOperation.SAVE_ATTENDANCE, payload, payload.lessonId)
@@ -584,7 +665,10 @@ class SyncManager @Inject constructor(
                     put("work_type", m.workType)
                     put("comment", m.comment)
                     if (m.id > 0) put("id", m.id)
-                    if (m.retake) put("retake", 1)
+                    if (m.retake) {
+                        put("retake", 1)
+                        if (m.attemptDate.isNotBlank()) put("date", m.attemptDate)
+                    }
                 }
             }
         }

@@ -531,21 +531,37 @@ private fun formatShortDate(dateStr: String?): String {
     return if (parts.size == 3) "${parts[2]}.${parts[1]}" else dateStr ?: ""
 }
 
-/** Дата пересдачи из поля UI (ДД.ММ.ГГГГ или ГГГГ-ММ-ДД) → Y-m-d ("" при пустом). */
+/** Дата пересдачи из поля UI (ДД.ММ.ГГГГ или ГГГГ-ММ-ДД) → Y-m-d ("" при пустом
+ *  или некорректном значении). */
 internal fun normalizeRetakeDate(input: String): String {
     val v = input.trim()
     if (v.isBlank()) return ""
     if (Regex("\\d{4}-\\d{1,2}-\\d{1,2}").matches(v)) {
         val p = v.split("-")
-        return "%04d-%02d-%02d".format(p[0].toInt(), p[1].toInt(), p[2].toInt())
+        val y = p[0].toInt()
+        val mo = p[1].toInt()
+        val d = p[2].toInt()
+        if (!isValidYmd(y, mo, d)) return ""
+        return "%04d-%02d-%02d".format(y, mo, d)
     }
     val m = Regex("(\\d{1,2})\\.(\\d{1,2})\\.(\\d{2,4})").find(v) ?: return ""
     var y = m.groupValues[3].toInt()
     if (y < 100) y += 2000
     val mo = m.groupValues[2].toInt()
     val d = m.groupValues[1].toInt()
-    if (mo !in 1..12 || d !in 1..31) return ""
+    if (!isValidYmd(y, mo, d)) return ""
     return "%04d-%02d-%02d".format(y, mo, d)
+}
+
+private fun isValidYmd(year: Int, month: Int, day: Int): Boolean {
+    if (month !in 1..12) return false
+    val days = when (month) {
+        1, 3, 5, 7, 8, 10, 12 -> 31
+        4, 6, 9, 11 -> 30
+        2 -> if ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) 29 else 28
+        else -> return false
+    }
+    return day in 1..days
 }
 
 @Composable

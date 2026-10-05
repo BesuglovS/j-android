@@ -14,6 +14,9 @@ interface PendingChangeDao {
     @Query("SELECT * FROM pending_changes ORDER BY id")
     suspend fun getAll(): List<PendingChangeEntity>
 
+    @Query("SELECT * FROM pending_changes WHERE operation = :operation AND lessonId = :lessonId ORDER BY id")
+    suspend fun getByOperationAndLesson(operation: String, lessonId: Int): List<PendingChangeEntity>
+
     @Query("SELECT * FROM pending_changes WHERE id = :id")
     suspend fun getById(id: Long): PendingChangeEntity?
 

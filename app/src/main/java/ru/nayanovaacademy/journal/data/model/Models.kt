@@ -54,7 +54,7 @@ data class Mark(
     @SerializedName("work_type") val workType: String,
     val comment: String?,
     @SerializedName("created_at") val createdAt: String?,
-    /** Попытка переписывания (привязана к уроку исходной оценки). */
+    /** Попытка переписывания (привязана к уроку, из которого поставлена). */
     @SerializedName("is_retake") val isRetake: Int = 0,
     /** Итоговая (последняя) попытка группы — участвует в среднем. */
     @SerializedName("is_current") val isCurrent: Int = 1,

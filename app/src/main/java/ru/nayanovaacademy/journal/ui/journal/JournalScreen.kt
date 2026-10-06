@@ -147,7 +147,11 @@ fun JournalScreen(
                     localRemarks = localRemarks,
                     hasPreviousHomework = detail?.previousHomework != null,
                     previousHomework = detail?.previousHomework,
-                    currentMarks = detail?.currentMarks ?: emptyMap(),
+                    // Итоговые оценки только открытого урока: пересдача
+                    // привязывается к открытой работе, а не к более поздней
+                    // работе того же типа из другого урока.
+                    currentMarks = (detail?.currentMarks ?: emptyMap())
+                        .mapValues { (_, list) -> list.filter { it.lessonId == lessonId } },
                     onAddMark = { sid, v, wt, c, retake, retakeDate -> viewModel.addMark(sid, v, wt, c, retake, retakeDate) },
                     onAddMarkBulk = { marks, wt, c -> viewModel.addMarkBulk(marks, wt, c) },
                     onRemoveMark = { sid, i -> viewModel.removeMark(sid, i) },

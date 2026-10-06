@@ -215,8 +215,8 @@ class SyncManager @Inject constructor(
     suspend fun applyMarks(lessonId: Int, payload: SaveMarksPayload) {
         // Сервер: обычные записи заменяют базовые (is_retake=0) оценки клетки
         // (ученик, урок, work_type); записи с retake=1 — попытки переписывания,
-        // добавляемые/обновляемые по id (привязка к уроку исходной оценки —
-        // на сервере); remove_mark_ids — явное удаление попыток.
+        // добавляемые/обновляемые по id (привязка к уроку, из которого ставится,
+        // — на сервере); remove_mark_ids — явное удаление попыток.
         updateLessonDetail(lessonId) { detail ->
             val updated = updateLessonStudentMarks(detail.marks, lessonId, payload, detail.lesson.date)
             val recomputed = recomputeLessonMarksCurrent(updated)

@@ -429,8 +429,10 @@ private fun ClassJournalTable(
         val lessonKey = dialogLesson.id.toString()
         val studentKey = dialogStudent.id.toString()
         val lessonMarks = marks[lessonKey]?.get(studentKey) ?: emptyList()
-        // Итоговые попытки ученика по предмету (все уроки журнала)
-        val subjectCurrentMarks = marks.values.flatMap { it[studentKey] ?: emptyList() }
+        // Итоговые работы только открытой клетки (урок × ученик): пересдача
+        // привязывается к открытой работе, а не к более поздней работе
+        // того же типа из другого урока.
+        val openLessonCurrentMarks = lessonMarks
             .filter { it.isCurrent == 1 && it.value in 2..5 }
         MarkDialog(
             studentName = "${dialogStudent.lastName} ${dialogStudent.firstName}",
@@ -438,7 +440,7 @@ private fun ClassJournalTable(
                 JournalViewModel.LocalMark(it.value, it.workType, it.comment ?: "", it.id, it.isRetake == 1, it.isCurrent == 1, it.attemptDate ?: "")
             },
             fixedWorkType = null,
-            currentMarks = subjectCurrentMarks.map {
+            currentMarks = openLessonCurrentMarks.map {
                 ru.nayanovaacademy.journal.data.model.CurrentMark(
                     it.id, it.studentId, it.value, it.workType, it.comment,
                     it.lessonId, lessons.firstOrNull { l -> l.id == it.lessonId }?.date,

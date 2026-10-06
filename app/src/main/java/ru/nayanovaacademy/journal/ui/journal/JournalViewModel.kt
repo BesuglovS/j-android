@@ -158,8 +158,8 @@ class JournalViewModel @Inject constructor(
 
     /** Добавить оценку (только 2–5) с указанием, за что она, и комментарием.
      *  retake=true — попытка переписывания: attemptDate (Y-m-d) — дата пересдачи;
-     *  сервер привязывает её к уроку исходной оценки, после сохранения урок
-     *  перезагружается (оценка «переезжает» в клетку исходной даты). */
+     *  сервер привязывает её к этому же уроку (клетке), после сохранения урок
+     *  перезагружается. У одной работы может быть несколько пересдач. */
     fun addMark(studentId: Int, value: Int, workType: String, comment: String = "", retake: Boolean = false, attemptDate: String = "") {
         if (value < 2 || value > 5) return
         val type = workType.ifBlank { "Урок" }

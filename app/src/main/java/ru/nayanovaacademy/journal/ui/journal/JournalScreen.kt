@@ -204,7 +204,7 @@ fun JournalGrid(
     var showRemarkDialog by remember { mutableStateOf(false) }
     var showMarkDialog by remember { mutableStateOf(false) }
     var showBulkMarkDialog by remember { mutableStateOf(false) }
-    var showHomeworkInfoDialog by remember { mutableStateOf(false) }
+    var showHomeworkGradeDialog by remember { mutableStateOf(false) }
     // null — выбор «за что» в диалоге; "ДЗ" — фиксируется колонкой ДЗ
     var markDialogWorkType by remember { mutableStateOf<String?>(null) }
     var lateDialogStudentId by remember { mutableStateOf<Int?>(null) }
@@ -258,7 +258,7 @@ fun JournalGrid(
                                 .width(90.dp)
                                 .height(40.dp)
                                 .padding(4.dp)
-                                .clickable { showHomeworkInfoDialog = true },
+                                .clickable { showHomeworkGradeDialog = true },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -516,11 +516,17 @@ fun JournalGrid(
         )
     }
 
-    // Диалог информации о домашнем задании
-    if (showHomeworkInfoDialog) {
-        HomeworkInfoDialog(
+    // Диалог домашнего задания: текст задания + выставление оценок за ДЗ всему классу
+    if (showHomeworkGradeDialog) {
+        HomeworkGradeDialog(
             homework = previousHomework,
-            onDismiss = { showHomeworkInfoDialog = false }
+            students = students,
+            localMarks = localMarks,
+            onApply = { marks, comment ->
+                showHomeworkGradeDialog = false
+                onAddMarkBulk(marks, HOMEWORK_TYPE, comment)
+            },
+            onDismiss = { showHomeworkGradeDialog = false }
         )
     }
 }
@@ -1150,43 +1156,193 @@ fun HomeworkDialog(
 }
 
 /**
- * Диалог для отображения информации о домашнем задании (только чтение).
+ * Диалог домашнего задания: текст задания (что задано, подробности, срок сдачи)
+ * и выставление оценок за это ДЗ всему классу. «За что» зафиксировано как ДЗ.
+ * Значение оценки (2–5) выбирается отдельно у каждого ученика; кому не выбрано —
+ * тот пропускается. Повторное нажатие снимает выбор.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun HomeworkInfoDialog(
+fun HomeworkGradeDialog(
     homework: ru.nayanovaacademy.journal.data.model.Homework?,
+    students: List<Student>,
+    localMarks: Map<Int, List<JournalViewModel.LocalMark>>,
+    onApply: (marks: List<Pair<Int, Int>>, comment: String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
+    var comment by remember { mutableStateOf("") }
+    // Выбранная оценка на ученика: studentId -> значение (2..5)
+    var selectedMarks by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
+
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("Домашнее задание") },
-        text = {
-            if (homework == null) {
-                Text("Домашнее задание не задано", fontSize = 14.sp)
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!homework.title.isNullOrBlank()) {
-                        Text(homework.title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    }
-                    if (!homework.description.isNullOrBlank()) {
-                        Text(homework.description, fontSize = 14.sp)
-                    }
-                    if (!homework.dueDate.isNullOrBlank()) {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp, vertical = 24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                modifier = Modifier
+                    .widthIn(max = 640.dp)
+                    .fillMaxWidth()
+                    .fillMaxHeight(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Домашнее задание", style = MaterialTheme.typography.titleLarge)
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Текст задания
+                    if (homework == null) {
                         Text(
-                            "Срок сдачи: ${homework.dueDate}",
-                            fontSize = 13.sp,
+                            "Домашнее задание не задано",
+                            fontSize = 14.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    } else {
+                        if (!homework.title.isNullOrBlank()) {
+                            Text(homework.title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        }
+                        if (!homework.description.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(homework.description, fontSize = 14.sp)
+                        }
+                        if (!homework.dueDate.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Срок сдачи: ${homework.dueDate}",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text("Выставить оценки за ДЗ всему классу", style = MaterialTheme.typography.titleSmall)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = comment,
+                        onValueChange = { comment = it },
+                        label = { Text("Комментарий (необязательно)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Оценки: ${selectedMarks.size} из ${students.size}",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (selectedMarks.isNotEmpty()) {
+                            TextButton(onClick = { selectedMarks = emptyMap() }) {
+                                Text("Сбросить")
+                            }
+                        }
+                    }
+
+                    // Список учеников с текущими оценками за ДЗ и кнопками 2–5
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        students.forEach { student ->
+                            val selected = selectedMarks[student.id]
+                            val existing = (localMarks[student.id] ?: emptyList())
+                                .filter { it.workType == HOMEWORK_TYPE }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "${student.lastName} ${student.firstName}",
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (existing.isNotEmpty()) {
+                                        Text(
+                                            "уже: " + existing.joinToString(" ") {
+                                                it.value.toString() + if (!it.isCurrent) "(стар.)" else ""
+                                            },
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    VALID_MARKS.forEach { value ->
+                                        val isSel = selected == value
+                                        Box(
+                                            modifier = Modifier
+                                                .size(30.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(markColor(value).copy(alpha = if (isSel) 0.35f else 0.12f))
+                                                .border(
+                                                    if (isSel) 2.dp else 1.dp,
+                                                    markColor(value).copy(alpha = if (isSel) 1f else 0.4f),
+                                                    RoundedCornerShape(6.dp)
+                                                )
+                                                .clickable {
+                                                    selectedMarks = if (isSel)
+                                                        selectedMarks - student.id
+                                                    else
+                                                        selectedMarks + (student.id to value)
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                value.toString(),
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = markColor(value)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = onDismiss) {
+                            Text("Отмена")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            enabled = selectedMarks.isNotEmpty(),
+                            onClick = {
+                                onApply(selectedMarks.map { it.key to it.value }, comment.trim())
+                            }
+                        ) {
+                            Text("Добавить (${selectedMarks.size})")
+                        }
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Закрыть")
-            }
         }
-    )
+    }
 }
 
 /**

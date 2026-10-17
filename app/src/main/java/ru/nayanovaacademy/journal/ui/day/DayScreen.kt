@@ -28,6 +28,7 @@ private val dateFormatter = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", Loc
 @Composable
 fun DayScreen(
     onLessonSelected: (Int) -> Unit,
+    onAllSubjects: () -> Unit,
     onCreateLesson: () -> Unit,
     onLogout: () -> Unit,
     viewModel: DayViewModel = hiltViewModel()
@@ -70,6 +71,9 @@ fun DayScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
                 ),
                 actions = {
+                    TextButton(onClick = onAllSubjects) {
+                        Text("Все предметы", color = MaterialTheme.colorScheme.onPrimary)
+                    }
                     // Принудительная синхронизация: офлайн-очередь + кеш + список дня
                     if (isSyncing) {
                         CircularProgressIndicator(

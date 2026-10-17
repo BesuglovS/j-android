@@ -20,7 +20,6 @@ import ru.nayanovaacademy.journal.data.sync.UpdateLessonPayload
 import ru.nayanovaacademy.journal.util.CookieStore
 import ru.nayanovaacademy.journal.util.SubjectMerge
 import ru.nayanovaacademy.journal.util.SubjectMerge.SubjectGroup
-import ru.nayanovaacademy.journal.util.SubjectMerge.subjectIds
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
@@ -287,7 +286,7 @@ class JournalRepository @Inject constructor(
     private suspend fun enhanceHomeworkForGroup(detail: LessonDetail): LessonDetail {
         val lesson = detail.lesson
         val group = subjectGroup(lesson.classId) ?: return detail
-        if (lesson.subjectId !in subjectIds(group)) return detail
+        if (lesson.subjectId !in group.subjectIds) return detail
 
         val merged = when (val r = mergedLessons(lesson.classId, lesson.subjectId)) {
             is Result.Success -> r.data
@@ -702,54 +701,55 @@ class JournalRepository @Inject constructor(
 
     // ------------------------------------------------------------------
     // Объединённые предметы: «Информатика + Труд (технология)» (9 классы),
-    // «Информатика и моделирование + Пилотирование БПЛА» (8 классы).
+    // «Информатика + Моделирование и пилотирование БПЛА» (8 классы),
+    // «Информатика + Инженерия БПЛА» (7 классы). В 8 и 7 параллелях
+    // информатика может лежать в классах-подгруппах (8 А1/8 А2, 7 А1/7 А2).
     // ------------------------------------------------------------------
 
     /**
-     * Пара предметов, объединяемых в один, для данного класса.
-     * Для 9 классов — «Информатика» + «Труд (технология)» (приложение
-     * преподавателя Безуглова С.В.), для 8 классов — «Информатика
-     * и моделирование» + «Пилотирование БПЛА». Возвращается, только если
-     * в списке предметов класса есть оба предмета пары.
+     * Объединённый предмет параллели для класса [classId]: в него входят
+     * предметы основного класса и его подгрупп. Возвращается, только если
+     * в параллели есть оба нужных предмета.
      */
     suspend fun subjectGroup(classId: Int): SubjectGroup? {
-        val cls = when (val r = classes()) {
-            is Result.Success -> r.data.firstOrNull { it.id == classId }
-            is Result.Error -> null
-        } ?: return null
-
-        val subjects = when (val r = classSubjects(classId)) {
+        val classes = when (val r = classes()) {
             is Result.Success -> r.data
             is Result.Error -> return null
         }
-        val pair = SubjectMerge.findPair(cls.grade, cls.name, subjects) ?: return null
-        return SubjectGroup(classId, pair.first, pair.second)
+        val cls = classes.firstOrNull { it.id == classId } ?: return null
+        val mainName = SubjectMerge.mainClassName(cls.name)
+        val siblings = classes.filter { SubjectMerge.mainClassName(it.name) == mainName }
+        val subjectsByClassId = siblings.associate { c ->
+            c.id to when (val r = classSubjects(c.id)) {
+                is Result.Success -> r.data
+                is Result.Error -> emptyList()
+            }
+        }
+        return SubjectMerge.group(cls.grade, mainName, siblings, subjectsByClassId)
     }
 
-    /** Заголовок объединённого предмета, если classId+subjectId входят в пару. */
+    /** Заголовок объединённого предмета, если classId+subjectId входят в группу. */
     suspend fun subjectGroupLabel(classId: Int, subjectId: Int): String? {
         val group = subjectGroup(classId) ?: return null
-        return if (subjectId in subjectIds(group)) group.label else null
+        return if (group.containsSubject(subjectId)) group.label else null
     }
 
     /**
-     * Уроки объединённого предмета: если subjectId входит в пару —
-     * уроки обоих предметов одним списком (по дате/времени, новые сверху).
+     * Уроки объединённого предмета: если subjectId входит в группу — уроки
+     * всех входящих в неё предметов одним списком (по дате/времени, новые сверху).
      */
     suspend fun mergedLessons(classId: Int, subjectId: Int): Result<List<Lesson>> {
         val group = subjectGroup(classId) ?: return lessons(classId, subjectId)
-        if (subjectId !in subjectIds(group)) return lessons(classId, subjectId)
+        if (!group.containsSubject(subjectId)) return lessons(classId, subjectId)
 
-        val r1 = lessons(classId, group.first.id)
-        val r2 = lessons(classId, group.second.id)
-        val l1 = (r1 as? Result.Success)?.data
-        val l2 = (r2 as? Result.Success)?.data
-        if (l1 == null && l2 == null) return r1
-        return Result.Success(mergeLessons(l1 ?: emptyList(), l2 ?: emptyList()))
+        val results = group.members.map { it to lessons(it.classId, it.subject.id) }
+        val lists = results.mapNotNull { (_, r) -> (r as? Result.Success<List<Lesson>>)?.data }
+        if (lists.isEmpty()) return results.first().second
+        return Result.Success(mergeLessons(lists))
     }
 
-    private fun mergeLessons(a: List<Lesson>, b: List<Lesson>): List<Lesson> =
-        (a + b)
+    private fun mergeLessons(lists: List<List<Lesson>>): List<Lesson> =
+        lists.flatten()
             .distinctBy { it.id }
             .sortedWith(
                 compareByDescending<Lesson> { it.date }
@@ -758,36 +758,35 @@ class JournalRepository @Inject constructor(
             )
 
     /**
-     * Общий журнал объединённого предмета: склеивает уроки, оценки и
-     * посещаемость двух предметов. Средняя оценка считается по всем урокам.
-     * Офлайн-кеш остаётся попредметным, поэтому локальные правки видны.
+     * Общий журнал объединённого предмета: склеивает уроки, учеников, оценки
+     * и посещаемость всех входящих в группу предметов (в т.ч. подгрупп).
+     * Средняя оценка считается по всем урокам. Офлайн-кеш остаётся
+     * попредметным, поэтому локальные правки видны.
      */
     suspend fun mergedClassJournal(classId: Int, subjectId: Int): Result<ClassJournalData> {
         val group = subjectGroup(classId) ?: return classJournal(classId, subjectId)
-        if (subjectId !in subjectIds(group)) return classJournal(classId, subjectId)
+        if (!group.containsSubject(subjectId)) return classJournal(classId, subjectId)
 
-        val r1 = classJournal(classId, group.first.id)
-        val r2 = classJournal(classId, group.second.id)
-        val d1 = (r1 as? Result.Success)?.data
-        val d2 = (r2 as? Result.Success)?.data
-        if (d1 == null && d2 == null) return r1
-        val a = d1 ?: d2!!
-        val b = d2 ?: a
-        return Result.Success(mergeClassJournals(a, b))
+        val results = group.members.map { it to classJournal(it.classId, it.subject.id) }
+        val journals = results.mapNotNull { (_, r) -> (r as? Result.Success<ClassJournalData>)?.data }
+        if (journals.isEmpty()) return results.first().second
+        return Result.Success(mergeClassJournals(journals))
     }
 
-    private fun mergeClassJournals(a: ClassJournalData, b: ClassJournalData): ClassJournalData =
+    private fun mergeClassJournals(journals: List<ClassJournalData>): ClassJournalData =
         ClassJournalData(
-            lessons = (a.lessons + b.lessons)
+            lessons = journals.flatMap { it.lessons }
                 .distinctBy { it.id }
                 .sortedWith(
                     compareBy<Lesson> { it.date }
                         .thenBy { it.startTime ?: "" }
                         .thenBy { it.id }
                 ),
-            students = a.students.ifEmpty { b.students },
-            marks = a.marks + b.marks,
-            attendance = a.attendance + b.attendance
+            students = journals.flatMap { it.students }
+                .distinctBy { it.id }
+                .sortedWith(compareBy({ it.lastName }, { it.firstName })),
+            marks = journals.fold(emptyMap<String, Map<String, List<Mark>>>()) { acc, d -> acc + d.marks },
+            attendance = journals.fold(emptyMap<String, Map<String, AttendanceEntry>>()) { acc, d -> acc + d.attendance }
         )
 
     /** Триггер синхронизации из UI (полустовый запрос на синхронизацию сейчас). */

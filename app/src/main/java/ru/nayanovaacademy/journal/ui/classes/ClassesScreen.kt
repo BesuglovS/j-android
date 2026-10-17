@@ -19,12 +19,12 @@ import ru.nayanovaacademy.journal.ui.status.OfflineStatusBanner
 @Composable
 fun ClassesScreen(
     onClassSelected: (Int, Int, String, String) -> Unit,
+    onAllSubjects: () -> Unit,
     onBack: () -> Unit,
     onLogout: () -> Unit,
     viewModel: ClassesViewModel = hiltViewModel()
 ) {
     val classes by viewModel.classes.collectAsState()
-    val subjects by viewModel.subjects.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
     val subjectsLoading by viewModel.subjectsLoading.collectAsState()
@@ -37,7 +37,7 @@ fun ClassesScreen(
 
     // Предметы загружаются лениво при выборе класса (с повтором при ошибке).
     LaunchedEffect(selectedClassId) {
-        selectedClassId?.let { viewModel.loadSubjects(it) }
+        selectedClassId?.let { viewModel.loadClassSubjects(it) }
     }
 
     Scaffold(
@@ -54,6 +54,9 @@ fun ClassesScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
                 ),
                 actions = {
+                    TextButton(onClick = onAllSubjects) {
+                        Text("Все предметы", color = MaterialTheme.colorScheme.onPrimary)
+                    }
                     IconButton(onClick = {
                         viewModel.logout()
                         onLogout()
@@ -98,7 +101,7 @@ fun ClassesScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(classes) { cls ->
+                    items(viewModel.visibleClasses()) { cls ->
                         val isSelected = selectedClassId == cls.id
                         Card(
                             modifier = Modifier
@@ -132,21 +135,19 @@ fun ClassesScreen(
 
                 // Предметы выбранного класса
                 if (selectedClassId != null) {
+                    val selectedId = selectedClassId!!
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "Предметы класса ${classes.find { it.id == selectedClassId }?.name ?: ""}",
+                        text = "Предметы класса ${classes.find { it.id == selectedId }?.name ?: ""}",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    val classSubjects = viewModel.displaySubjects(
-                            selectedClassId ?: 0,
-                            classes,
-                            subjects[selectedClassId] ?: emptyList()
-                        )
-                    val classSubjectsLoading = subjectsLoading.contains(selectedClassId)
-                    val classSubjectsError = subjectsError[selectedClassId]
+                    val classChoices = viewModel.displayChoices(selectedId)
+                    val siblingIds = viewModel.siblingClassIds(selectedId)
+                    val classSubjectsLoading = siblingIds.any { subjectsLoading.contains(it) }
+                    val classSubjectsError = siblingIds.firstNotNullOfOrNull { subjectsError[it] }
                     when {
                         classSubjectsLoading -> {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -167,12 +168,12 @@ fun ClassesScreen(
                                     color = MaterialTheme.colorScheme.error
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
-                                TextButton(onClick = { selectedClassId?.let { viewModel.loadSubjects(it, force = true) } }) {
+                                TextButton(onClick = { viewModel.loadClassSubjects(selectedId, force = true) }) {
                                     Text("Повторить")
                                 }
                             }
                         }
-                        classSubjects.isEmpty() -> {
+                        classChoices.isEmpty() -> {
                             Text(
                                 "Нет предметов",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -186,17 +187,16 @@ fun ClassesScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 modifier = Modifier.heightIn(max = 400.dp)
                             ) {
-                                items(classSubjects) { item ->
+                                items(classChoices) { item ->
                                     Card(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clickable {
-                                                val cls = classes.find { it.id == selectedClassId }
                                                 onClassSelected(
-                                                    selectedClassId!!,
-                                                    item.subject.id,
-                                                    cls?.name ?: "",
-                                                    item.label
+                                                    item.classId,
+                                                    item.subjectId,
+                                                    item.className,
+                                                    item.subjectName
                                                 )
                                             },
                                         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -215,7 +215,7 @@ fun ClassesScreen(
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = item.label,
+                                                text = item.subjectName,
                                                 style = MaterialTheme.typography.bodyLarge
                                             )
                                         }

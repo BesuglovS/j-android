@@ -6,6 +6,7 @@ import ru.nayanovaacademy.journal.data.model.SchoolClass
 import ru.nayanovaacademy.journal.data.model.Subject
 import ru.nayanovaacademy.journal.data.repository.JournalRepository
 import ru.nayanovaacademy.journal.util.CookieStore
+import ru.nayanovaacademy.journal.util.SubjectDisplay
 import ru.nayanovaacademy.journal.util.SubjectMerge
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,14 +19,6 @@ class ClassesViewModel @Inject constructor(
     private val repository: JournalRepository,
     private val cookieStore: CookieStore
 ) : ViewModel() {
-
-    /** Предмет в списке выбора; для объединённого — ещё и парный. */
-    data class SubjectItem(
-        val subject: Subject,
-        val paired: Subject? = null
-    ) {
-        val label: String get() = paired?.let { "${subject.name} и ${it.name}" } ?: subject.name
-    }
 
     private val _classes = MutableStateFlow<List<SchoolClass>>(emptyList())
     val classes = _classes.asStateFlow()
@@ -85,6 +78,23 @@ class ClassesViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Загружает предметы класса и его подгрупп (классов вида «7 А1»/«8 А1»):
+     * в 7 и 8 параллелях информатика может лежать в подгруппах, и для
+     * объединённого предмета нужны предметы всех классов параллели.
+     */
+    fun loadClassSubjects(classId: Int, force: Boolean = false) {
+        val cls = _classes.value.firstOrNull { it.id == classId }
+        if (cls == null) {
+            loadSubjects(classId, force)
+            return
+        }
+        val mainName = SubjectMerge.mainClassName(cls.name)
+        _classes.value
+            .filter { SubjectMerge.mainClassName(it.name) == mainName }
+            .forEach { loadSubjects(it.id, force) }
+    }
+
     fun logout() {
         viewModelScope.launch {
             cookieStore.clearSession()
@@ -92,17 +102,28 @@ class ClassesViewModel @Inject constructor(
     }
 
     /**
-     * Предметы класса для экрана выбора: если у класса есть объединённый
-     * предмет («Информатика и Труд» в 9-х, «Информатика и моделирование +
-     * Пилотирование БПЛА» в 8-х), пара показывается одной карточкой.
+     * Предметы класса для экрана выбора: объединённые предметы показываются
+     * одной карточкой (в т.ч. когда информатика лежит в классах-подгруппах,
+     * как «7 А1»/«8 А1»).
      */
-    fun displaySubjects(classId: Int, classes: List<SchoolClass>, subjects: List<Subject>): List<SubjectItem> {
-        if (subjects.isEmpty()) return emptyList()
-        val cls = classes.firstOrNull { it.id == classId } ?: return subjects.map { SubjectItem(it) }
-        val pair = SubjectMerge.findPair(cls.grade, cls.name, subjects) ?: return subjects.map { SubjectItem(it) }
-        val (first, second) = pair
-        return subjects
-            .filter { it.id != second.id }
-            .map { if (it.id == first.id) SubjectItem(first, second) else SubjectItem(it) }
+    fun displayChoices(classId: Int): List<SubjectDisplay.Choice> {
+        val cls = _classes.value.firstOrNull { it.id == classId } ?: return emptyList()
+        val mainName = SubjectMerge.mainClassName(cls.name)
+        val siblings = _classes.value.filter { SubjectMerge.mainClassName(it.name) == mainName }
+        val subjectsByClassId = siblings.associate { it.id to (_subjects.value[it.id] ?: emptyList()) }
+        return SubjectDisplay.choices(siblings, subjectsByClassId).filter { it.classId == classId }
+    }
+
+    /** Классы без подгрупп — для сетки классов (подгруппы прячутся). */
+    fun visibleClasses(): List<SchoolClass> =
+        _classes.value.filter { !SubjectMerge.isSubgroup(it.name) }
+
+    /** id класса и его подгрупп — для индикатора загрузки предметов. */
+    fun siblingClassIds(classId: Int): List<Int> {
+        val cls = _classes.value.firstOrNull { it.id == classId } ?: return listOf(classId)
+        val mainName = SubjectMerge.mainClassName(cls.name)
+        return _classes.value
+            .filter { SubjectMerge.mainClassName(it.name) == mainName }
+            .map { it.id }
     }
 }

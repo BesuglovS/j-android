@@ -47,6 +47,7 @@ fun ClassJournalScreen(
     className: String,
     subjectName: String,
     onLessonSelected: (Int) -> Unit,
+    onAllSubjects: () -> Unit,
     onBack: () -> Unit,
     viewModel: ClassJournalViewModel = hiltViewModel()
 ) {
@@ -81,6 +82,9 @@ fun ClassJournalScreen(
                         titleContentColor = MaterialTheme.colorScheme.onPrimary
                     ),
                     actions = {
+                        TextButton(onClick = onAllSubjects) {
+                            Text("Все предметы", color = MaterialTheme.colorScheme.onPrimary)
+                        }
                         IconButton(onClick = { viewModel.load(classId, subjectId) }) {
                             Icon(Icons.Default.Refresh, "Обновить", tint = MaterialTheme.colorScheme.onPrimary)
                         }
@@ -334,7 +338,8 @@ private fun ClassJournalTable(
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (status == "absent") {
+                                val hasMarks = studentMarks.isNotEmpty()
+                                if (status == "absent" && !hasMarks) {
                                     Text(
                                         "Н",
                                         fontSize = 16.sp,
@@ -344,7 +349,7 @@ private fun ClassJournalTable(
                                 } else {
                                     // Оценки клетки (одна строка): итоговые попытки крупно,
                                     // старые (переписанные) — сразу за ними меньшим шрифтом
-                                    if (studentMarks.isNotEmpty()) {
+                                    if (hasMarks) {
                                         val finals = studentMarks.filter { it.isCurrent == 1 }
                                         val stales = studentMarks.filter { it.isCurrent != 1 }
                                         Row(
@@ -388,6 +393,33 @@ private fun ClassJournalTable(
                                             )
                                         }
                                     }
+                                }
+                                // Ученик отсутствовал, но есть оценка: показываем
+                                // оценки, а отсутствие — маленьким «Н» в углу клетки.
+                                if (status == "absent" && hasMarks) {
+                                    Text(
+                                        "Н",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = COLOR_ABSENT,
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(top = 1.dp, end = 2.dp)
+                                    )
+                                }
+                                // Опоздал, но есть оценка: показываем оценки,
+                                // а опоздание и минуты — бейджем в углу клетки.
+                                if (status == "late" && hasMarks) {
+                                    val lateMins = studentAttendance?.lateMinutes ?: 0
+                                    Text(
+                                        text = if (lateMins > 0) "Оп.${lateMins}м" else "Оп.",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = COLOR_LATE,
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(top = 1.dp, end = 2.dp)
+                                    )
                                 }
                             }
                         }

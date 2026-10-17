@@ -27,6 +27,7 @@ fun LessonsScreen(
     subjectName: String,
     onLessonSelected: (Int) -> Unit,
     onClassJournal: () -> Unit,
+    onAllSubjects: () -> Unit,
     onBack: () -> Unit,
     viewModel: LessonsViewModel = hiltViewModel()
 ) {
@@ -63,6 +64,9 @@ fun LessonsScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
                 ),
                 actions = {
+                    TextButton(onClick = onAllSubjects) {
+                        Text("Все предметы", color = MaterialTheme.colorScheme.onPrimary)
+                    }
                     IconButton(onClick = { onClassJournal() }) {
                         Icon(Icons.Default.TableChart, "Журнал класса", tint = MaterialTheme.colorScheme.onPrimary)
                     }

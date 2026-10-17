@@ -12,11 +12,13 @@ import ru.nayanovaacademy.journal.ui.day.DayScreen
 import ru.nayanovaacademy.journal.ui.journal.JournalScreen
 import ru.nayanovaacademy.journal.ui.lessons.LessonsScreen
 import ru.nayanovaacademy.journal.ui.settings.SettingsScreen
+import ru.nayanovaacademy.journal.ui.subjects.AllSubjectsScreen
 
 object Routes {
     const val SETTINGS = "settings"
     const val DAY = "day"
     const val CLASSES = "classes"
+    const val ALL_SUBJECTS = "all-subjects"
     const val LESSONS = "lessons/{classId}/{subjectId}/{className}/{subjectName}"
     const val JOURNAL = "journal/{lessonId}"
     const val CLASS_JOURNAL = "class-journal/{classId}/{subjectId}/{className}/{subjectName}"
@@ -49,6 +51,9 @@ fun NavGraph(navController: NavHostController) {
                 onLessonSelected = { lessonId ->
                     navController.navigate(Routes.journal(lessonId))
                 },
+                onAllSubjects = {
+                    navController.navigate(Routes.ALL_SUBJECTS)
+                },
                 onCreateLesson = {
                     navController.navigate(Routes.CLASSES)
                 },
@@ -59,10 +64,21 @@ fun NavGraph(navController: NavHostController) {
                 }
             )
         }
+        composable(Routes.ALL_SUBJECTS) {
+            AllSubjectsScreen(
+                onSubjectSelected = { classId, subjectId, className, subjectName ->
+                    navController.navigate(Routes.classJournal(classId, subjectId, className, subjectName))
+                },
+                onBack = { navController.popBackStack() }
+            )
+        }
         composable(Routes.CLASSES) {
             ClassesScreen(
                 onClassSelected = { classId, subjectId, className, subjectName ->
                     navController.navigate(Routes.lessons(classId, subjectId, className, subjectName))
+                },
+                onAllSubjects = {
+                    navController.navigate(Routes.ALL_SUBJECTS)
                 },
                 onBack = { navController.popBackStack() },
                 onLogout = {
@@ -96,6 +112,9 @@ fun NavGraph(navController: NavHostController) {
                 onClassJournal = {
                     navController.navigate(Routes.classJournal(classId, subjectId, className, subjectName))
                 },
+                onAllSubjects = {
+                    navController.navigate(Routes.ALL_SUBJECTS)
+                },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -107,6 +126,9 @@ fun NavGraph(navController: NavHostController) {
             JournalScreen(
                 lessonId = lessonId,
                 onBack = { navController.popBackStack() },
+                onAllSubjects = {
+                    navController.navigate(Routes.ALL_SUBJECTS)
+                },
                 onClassJournal = { classId, subjectId, className, subjectName ->
                     navController.navigate(Routes.classJournal(classId, subjectId, className, subjectName))
                 }
@@ -132,6 +154,9 @@ fun NavGraph(navController: NavHostController) {
                 subjectName = subjectName,
                 onLessonSelected = { lessonId ->
                     navController.navigate(Routes.journal(lessonId))
+                },
+                onAllSubjects = {
+                    navController.navigate(Routes.ALL_SUBJECTS)
                 },
                 onBack = { navController.popBackStack() }
             )

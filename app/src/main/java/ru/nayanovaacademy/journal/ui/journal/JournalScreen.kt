@@ -56,6 +56,7 @@ fun markColor(value: Int): Color = when (value) {
 fun JournalScreen(
     lessonId: Int,
     onBack: () -> Unit,
+    onAllSubjects: () -> Unit,
     onClassJournal: (Int, Int, String, String) -> Unit,
     viewModel: JournalViewModel = hiltViewModel()
 ) {
@@ -113,6 +114,9 @@ fun JournalScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
                 ),
                 actions = {
+                    TextButton(onClick = onAllSubjects) {
+                        Text("Все предметы", color = MaterialTheme.colorScheme.onPrimary)
+                    }
                     detail?.lesson?.let { lesson ->
                         IconButton(onClick = {
                             onClassJournal(lesson.classId, lesson.subjectId, lesson.className ?: "", lesson.subjectName ?: "")

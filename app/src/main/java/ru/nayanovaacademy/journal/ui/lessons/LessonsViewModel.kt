@@ -53,22 +53,22 @@ class LessonsViewModel @Inject constructor(
         }
     }
 
-    /** Для объединённого предмета — оба предмета (для выбора при создании урока). */
+    /** Для объединённого предмета — все его предметы (для выбора при создании урока). */
     private suspend fun resolveSubjectOptions(classId: Int, subjectId: Int): List<Subject> {
         val group = repository.subjectGroup(classId) ?: return emptyList()
-        if (subjectId !in ru.nayanovaacademy.journal.util.SubjectMerge.subjectIds(group)) return emptyList()
-        val subjects = when (val r = repository.classSubjects(classId)) {
-            is JournalRepository.Result.Success -> r.data
-            is JournalRepository.Result.Error -> return emptyList()
-        }
-        return subjects.filter { it.id == group.first.id || it.id == group.second.id }
-            .sortedBy { it.name }
+        if (!group.containsSubject(subjectId)) return emptyList()
+        return group.members.map { it.subject }.distinctBy { it.name }.sortedBy { it.name }
     }
 
     fun createLesson(classId: Int, subjectId: Int, date: String, startTime: String, topic: String) {
         viewModelScope.launch {
             _isLoading.value = true
-            when (val result = repository.createLesson(classId, subjectId, date, startTime, topic)) {
+            // Для объединённого предмета урок создаётся у класса-владельца
+            // предмета: информатика 7 А/8 А лежит в подгруппах (7 А1, 8 А1).
+            val ownerClassId = repository.subjectGroup(classId)
+                ?.members?.firstOrNull { it.subject.id == subjectId }?.classId
+                ?: classId
+            when (val result = repository.createLesson(ownerClassId, subjectId, date, startTime, topic)) {
                 is JournalRepository.Result.Success -> {
                     _createSuccess.value = result.data
                 }

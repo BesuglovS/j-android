@@ -38,18 +38,18 @@ fun DayScreen(
     val selectedDate by viewModel.selectedDate.collectAsState()
     var showDatePicker by remember { mutableStateOf(false) }
 
-    val importItems by viewModel.importItems.collectAsState()
-    val importLoading by viewModel.importLoading.collectAsState()
-    val isImporting by viewModel.isImporting.collectAsState()
-    val importMessage by viewModel.importMessage.collectAsState()
+    val syncItems by viewModel.scheduleSyncItems.collectAsState()
+    val syncLoading by viewModel.scheduleSyncLoading.collectAsState()
+    val isApplyingSchedule by viewModel.isApplyingSchedule.collectAsState()
+    val scheduleSyncMessage by viewModel.scheduleSyncMessage.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
     val syncMessage by viewModel.syncMessage.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    LaunchedEffect(importMessage) {
-        importMessage?.let {
+    LaunchedEffect(scheduleSyncMessage) {
+        scheduleSyncMessage?.let {
             snackbarHostState.showSnackbar(it)
-            viewModel.consumeImportMessage()
+            viewModel.consumeScheduleSyncMessage()
         }
     }
 
@@ -101,9 +101,9 @@ fun DayScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 ExtendedFloatingActionButton(
-                    onClick = { viewModel.openImportPreview() },
-                    icon = { Icon(Icons.Default.EventRepeat, contentDescription = null) },
-                    text = { Text("Добавить занятия из расписания") }
+                    onClick = { viewModel.openScheduleSyncPreview() },
+                    icon = { Icon(Icons.Default.Rule, contentDescription = null) },
+                    text = { Text("Сверить с расписанием") }
                 )
                 ExtendedFloatingActionButton(
                     onClick = onCreateLesson,
@@ -221,24 +221,24 @@ fun DayScreen(
         }
     }
 
-    if (importLoading || importItems != null) {
-        ScheduleImportDialog(
-            items = importItems,
-            isLoading = importLoading,
-            isImporting = isImporting,
-            selectedCount = importItems?.count { it.enabled && it.selected } ?: 0,
-            onToggle = viewModel::toggleImportItem,
-            onConfirm = viewModel::confirmImport,
-            onDismiss = viewModel::dismissImportPreview
+    if (syncLoading || syncItems != null) {
+        ScheduleSyncDialog(
+            items = syncItems,
+            isLoading = syncLoading,
+            isApplying = isApplyingSchedule,
+            selectedCount = syncItems?.count { it.actionable && it.selected } ?: 0,
+            onToggle = viewModel::toggleScheduleSyncItem,
+            onConfirm = viewModel::confirmScheduleSync,
+            onDismiss = viewModel::dismissScheduleSyncPreview
         )
     }
 }
 
 @Composable
-private fun ScheduleImportDialog(
-    items: List<ScheduleImportItem>?,
+private fun ScheduleSyncDialog(
+    items: List<ScheduleSyncItem>?,
     isLoading: Boolean,
-    isImporting: Boolean,
+    isApplying: Boolean,
     selectedCount: Int,
     onToggle: (Int) -> Unit,
     onConfirm: () -> Unit,
@@ -246,7 +246,7 @@ private fun ScheduleImportDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Занятия из расписания") },
+        title = { Text("Сверка с расписанием") },
         text = {
             when {
                 isLoading || items == null -> {
@@ -258,79 +258,82 @@ private fun ScheduleImportDialog(
                     }
                 }
                 items.isEmpty() -> {
-                    Text("В расписании нет занятий на этот день")
+                    Text("Расхождений нет — журнал совпадает с расписанием")
                 }
                 else -> {
                     LazyColumn(
-                        modifier = Modifier.heightIn(max = 400.dp),
+                        modifier = Modifier.heightIn(max = 420.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         itemsIndexed(items) { index, item ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .then(
-                                        if (item.enabled) Modifier.clickable { onToggle(index) }
-                                        else Modifier
-                                    ),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Checkbox(
-                                    checked = item.selected,
-                                    onCheckedChange = if (item.enabled) ({ onToggle(index) }) else null
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = buildString {
-                                            append(item.schedule.timeStart ?: "—")
-                                            append("  ")
-                                            append(item.schedule.className)
-                                            append(" — ")
-                                            append(item.schedule.subject)
-                                            if (!item.schedule.parallelGroup.isNullOrBlank()) {
-                                                append(" (")
-                                                append(item.schedule.parallelGroup)
-                                                append(")")
-                                            }
-                                        },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    val subtitle = when {
-                                        item.exists -> "Уже есть в журнале"
-                                        item.classId == null -> "Класс не найден в журнале"
-                                        item.subjectId == null -> "Предмет не найден в журнале"
-                                        else -> listOfNotNull(
-                                            item.journalClassName?.let { "Журнал: $it" },
-                                            item.schedule.room?.takeIf { it.isNotBlank() }?.let { "Каб. $it" }
-                                        ).joinToString(" · ").ifEmpty { null }
-                                    }
-                                    if (subtitle != null) {
-                                        Text(
-                                            text = subtitle,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (item.enabled) MaterialTheme.colorScheme.onSurfaceVariant
-                                            else MaterialTheme.colorScheme.error
-                                        )
-                                    }
-                                }
-                            }
+                            ScheduleSyncRow(item = item, onToggle = { onToggle(index) })
                         }
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm, enabled = !isImporting && selectedCount > 0) {
-                Text(if (selectedCount > 0) "Добавить ($selectedCount)" else "Добавить")
+            TextButton(onClick = onConfirm, enabled = !isApplying && selectedCount > 0) {
+                Text(if (selectedCount > 0) "Применить ($selectedCount)" else "Применить")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !isImporting) {
-                Text(if (isImporting) "Импорт…" else "Отмена")
+            TextButton(onClick = onDismiss, enabled = !isApplying) {
+                Text(if (isApplying) "Применяю…" else "Отмена")
             }
         }
     )
+}
+
+@Composable
+private fun ScheduleSyncRow(item: ScheduleSyncItem, onToggle: () -> Unit) {
+    val actionLabel = when (item.action) {
+        ScheduleSyncAction.ADD -> "Добавить"
+        ScheduleSyncAction.UPDATE -> "Изменить"
+        ScheduleSyncAction.DELETE -> "Удалить"
+        ScheduleSyncAction.UNCHANGED -> "Без изменений"
+        ScheduleSyncAction.UNMATCHED -> "Не сопоставлено"
+    }
+    val actionColor = when (item.action) {
+        ScheduleSyncAction.ADD -> MaterialTheme.colorScheme.primary
+        ScheduleSyncAction.UPDATE -> MaterialTheme.colorScheme.tertiary
+        ScheduleSyncAction.DELETE -> MaterialTheme.colorScheme.error
+        ScheduleSyncAction.UNCHANGED -> MaterialTheme.colorScheme.onSurfaceVariant
+        ScheduleSyncAction.UNMATCHED -> MaterialTheme.colorScheme.error
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (item.actionable) Modifier.clickable(onClick = onToggle) else Modifier),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = item.selected,
+            onCheckedChange = if (item.actionable) ({ onToggle() }) else null
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = actionLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = actionColor,
+                    fontWeight = FontWeight.Bold
+                )
+                if (!item.detail.isNullOrBlank()) {
+                    Text(
+                        text = " · " + item.detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable

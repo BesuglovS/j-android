@@ -16,6 +16,20 @@ data class CreateLessonPayload(
     val localLessonId: Int
 )
 
+/** Обновление занятия (сверка с расписанием): время начала и кабинет. */
+data class UpdateLessonPayload(
+    val lessonId: Int,
+    val startTime: String,
+    val note: String,
+    /** Менять ли примечание: false — трогаем только время. */
+    val updateNote: Boolean
+)
+
+/** Удаление занятия (сверка с расписанием). */
+data class DeleteLessonPayload(
+    val lessonId: Int
+)
+
 data class MarkPayload(
     val value: Int,
     @SerializedName("work_type") val workType: String,

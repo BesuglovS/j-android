@@ -8,6 +8,7 @@ import ru.nayanovaacademy.journal.data.local.PendingChangeDao
 import ru.nayanovaacademy.journal.data.model.*
 import ru.nayanovaacademy.journal.data.sync.CreateLessonPayload
 import ru.nayanovaacademy.journal.data.sync.DeleteHomeworkPayload
+import ru.nayanovaacademy.journal.data.sync.DeleteLessonPayload
 import ru.nayanovaacademy.journal.data.sync.MarkPayload
 import ru.nayanovaacademy.journal.data.sync.NetworkMonitor
 import ru.nayanovaacademy.journal.data.sync.SaveAttendancePayload
@@ -15,6 +16,7 @@ import ru.nayanovaacademy.journal.data.sync.SaveHomeworkPayload
 import ru.nayanovaacademy.journal.data.sync.SaveMarksPayload
 import ru.nayanovaacademy.journal.data.sync.SaveRemarksPayload
 import ru.nayanovaacademy.journal.data.sync.SyncManager
+import ru.nayanovaacademy.journal.data.sync.UpdateLessonPayload
 import ru.nayanovaacademy.journal.util.CookieStore
 import ru.nayanovaacademy.journal.util.SubjectMerge
 import ru.nayanovaacademy.journal.util.SubjectMerge.SubjectGroup
@@ -355,6 +357,73 @@ class JournalRepository @Inject constructor(
             }
         } catch (e: Exception) {
             offlineCreate(syncManager.nextNegativeId(), true)
+        }
+    }
+
+    /**
+     * Обновление занятия (сверка с расписанием): время начала и примечание.
+     * При [updateNote]=false трогаем только время. Офлайн — локальная правка
+     * + очередь.
+     */
+    suspend fun updateLesson(
+        lessonId: Int,
+        startTime: String,
+        note: String,
+        updateNote: Boolean = true
+    ): Result<Boolean> {
+        val payload = UpdateLessonPayload(lessonId, startTime, note, updateNote)
+        val offlineApply: suspend () -> Result<Boolean> = {
+            syncManager.applyUpdateLesson(payload)
+            syncManager.enqueueUpdateLesson(payload)
+            Result.Success(true)
+        }
+        return try {
+            if (isOnline() && lessonId > 0) {
+                val body = HashMap<String, Any>()
+                body["start_time"] = startTime
+                if (updateNote) body["note"] = note
+                val response = api.lessonUpdate(lessonId, body)
+                if (response.isSuccessful) {
+                    syncManager.applyUpdateLesson(payload)
+                    Result.Success(true)
+                } else {
+                    Result.Error("Ошибка обновления занятия", response.code())
+                }
+            } else {
+                offlineApply()
+            }
+        } catch (e: Exception) {
+            offlineApply()
+        }
+    }
+
+    /**
+     * Удаление занятия (сверка с расписанием). Сервер не даёт удалить урок с
+     * оценками/ДЗ/посещаемостью/замечаниями — вернётся ошибка с кодом 409.
+     */
+    suspend fun deleteLesson(lessonId: Int): Result<Boolean> {
+        val payload = DeleteLessonPayload(lessonId)
+        val offlineApply: suspend () -> Result<Boolean> = {
+            syncManager.applyDeleteLesson(lessonId)
+            syncManager.enqueueDeleteLesson(payload)
+            Result.Success(true)
+        }
+        return try {
+            if (isOnline() && lessonId > 0) {
+                val response = api.lessonDelete(lessonId)
+                if (response.isSuccessful || response.code() == 404) {
+                    syncManager.applyDeleteLesson(lessonId)
+                    Result.Success(true)
+                } else if (response.code() == 409) {
+                    Result.Error("Нельзя удалить: есть оценки/ДЗ/посещаемость", 409)
+                } else {
+                    Result.Error("Ошибка удаления занятия", response.code())
+                }
+            } else {
+                offlineApply()
+            }
+        } catch (e: Exception) {
+            offlineApply()
         }
     }
 

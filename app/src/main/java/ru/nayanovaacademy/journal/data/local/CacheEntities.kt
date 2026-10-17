@@ -86,6 +86,8 @@ data class PendingChangeEntity(
 
 object PendingOperation {
     const val CREATE_LESSON = "CREATE_LESSON"
+    const val UPDATE_LESSON = "UPDATE_LESSON"
+    const val DELETE_LESSON = "DELETE_LESSON"
     const val SAVE_MARKS = "SAVE_MARKS"
     const val SAVE_ATTENDANCE = "SAVE_ATTENDANCE"
     const val SAVE_REMARKS = "SAVE_REMARKS"

@@ -467,6 +467,44 @@ class SyncManager @Inject constructor(
         return entity
     }
 
+    /** Локальное обновление занятия (офлайн-очередь или после успешного API). */
+    suspend fun applyUpdateLesson(payload: UpdateLessonPayload) {
+        val entity = cacheDao.getLesson(payload.lessonId) ?: return
+        val newStart = payload.startTime.ifBlank { null }
+        val newNote = if (payload.updateNote) payload.note.ifBlank { null } else entity.note
+        cacheDao.upsertLesson(entity.copy(startTime = newStart, note = newNote))
+        updateLessonDetail(payload.lessonId) { detail ->
+            detail.copy(
+                lesson = detail.lesson.copy(
+                    startTime = newStart,
+                    note = if (payload.updateNote) payload.note.ifBlank { null } else detail.lesson.note
+                )
+            )
+        }
+    }
+
+    /** Локальное удаление занятия и связанных данных из кэша. */
+    suspend fun applyDeleteLesson(lessonId: Int) {
+        val lesson = try { cacheDao.getLesson(lessonId) } catch (e: Exception) { null }
+        cacheDao.deleteLesson(lessonId)
+        cacheDao.deleteLessonDetail(lessonId)
+        if (lesson != null) {
+            val data = getCachedClassJournalData(lesson.classId, lesson.subjectId)
+            if (data != null) {
+                val key = lessonId.toString()
+                cacheClassJournal(
+                    lesson.classId,
+                    lesson.subjectId,
+                    data.copy(
+                        lessons = data.lessons.filter { it.id != lessonId },
+                        marks = data.marks - key,
+                        attendance = data.attendance - key
+                    )
+                )
+            }
+        }
+    }
+
     private suspend fun updateLessonDetail(lessonId: Int, transform: (LessonDetail) -> LessonDetail) {
         val existing = getCachedLessonDetail(lessonId) ?: return
         val updated = transform(existing)
@@ -504,6 +542,26 @@ class SyncManager @Inject constructor(
 
     suspend fun enqueueCreateLesson(payload: CreateLessonPayload) =
         enqueue(PendingOperation.CREATE_LESSON, payload, payload.localLessonId)
+
+    /** Обновление занятия (сверка с расписанием): схлопываем неотправленные
+     *  правки этого же урока — важна только последняя. */
+    suspend fun enqueueUpdateLesson(payload: UpdateLessonPayload) {
+        pendingChangeDao
+            .getByOperationAndLesson(PendingOperation.UPDATE_LESSON, payload.lessonId)
+            .forEach { pendingChangeDao.deleteById(it.id) }
+        enqueue(PendingOperation.UPDATE_LESSON, payload, payload.lessonId)
+    }
+
+    /** Удаление занятия (сверка с расписанием): снимаем правки и повторные
+     *  удаления этого урока — достаточно одного удаления. */
+    suspend fun enqueueDeleteLesson(payload: DeleteLessonPayload) {
+        for (op in listOf(PendingOperation.UPDATE_LESSON, PendingOperation.DELETE_LESSON)) {
+            pendingChangeDao
+                .getByOperationAndLesson(op, payload.lessonId)
+                .forEach { pendingChangeDao.deleteById(it.id) }
+        }
+        enqueue(PendingOperation.DELETE_LESSON, payload, payload.lessonId)
+    }
 
     /**
      * Ставит в очередь снапшот оценок урока, схлопывая ещё не отправленные
@@ -602,6 +660,14 @@ class SyncManager @Inject constructor(
                     val p = gson.fromJson(change.payload, CreateLessonPayload::class.java)
                     replayCreateLesson(p, remap)
                 }
+                PendingOperation.UPDATE_LESSON -> {
+                    val p = gson.fromJson(change.payload, UpdateLessonPayload::class.java)
+                    replayUpdateLesson(p, remap)
+                }
+                PendingOperation.DELETE_LESSON -> {
+                    val p = gson.fromJson(change.payload, DeleteLessonPayload::class.java)
+                    replayDeleteLesson(p, remap)
+                }
                 PendingOperation.SAVE_MARKS -> {
                     val p = gson.fromJson(change.payload, SaveMarksPayload::class.java)
                     replaySaveMarks(p, remap)
@@ -652,6 +718,26 @@ class SyncManager @Inject constructor(
         remap[p.localLessonId] = newId
         migrateLocalLesson(p.localLessonId, newId)
         refreshLessonDetail(newId)
+        return ReplayResult.SUCCESS
+    }
+
+    private suspend fun replayUpdateLesson(p: UpdateLessonPayload, remap: MutableMap<Int, Int>): ReplayResult {
+        val lessonId = remap[p.lessonId] ?: p.lessonId
+        val body = HashMap<String, Any>()
+        body["start_time"] = p.startTime
+        if (p.updateNote) body["note"] = p.note
+        val resp = api.lessonUpdate(lessonId, body)
+        if (!resp.isSuccessful) return failure(resp)
+        refreshLessonDetail(lessonId)
+        return ReplayResult.SUCCESS
+    }
+
+    private suspend fun replayDeleteLesson(p: DeleteLessonPayload, remap: MutableMap<Int, Int>): ReplayResult {
+        val lessonId = remap[p.lessonId] ?: p.lessonId
+        val resp = api.lessonDelete(lessonId)
+        // 404 — урок уже удалён на сервере, для нас это успех.
+        if (!resp.isSuccessful && resp.code() != 404) return failure(resp)
+        applyDeleteLesson(lessonId)
         return ReplayResult.SUCCESS
     }
 

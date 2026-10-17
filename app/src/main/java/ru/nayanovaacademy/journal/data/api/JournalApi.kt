@@ -32,6 +32,17 @@ interface JournalApi {
     @POST("api/v1/lessons")
     suspend fun lessonCreate(@Body body: HashMap<String, Any>): Response<Map<String, Int>>
 
+    @POST("api/v1/lessons/{id}/update")
+    suspend fun lessonUpdate(
+        @Path("id") lessonId: Int,
+        @Body body: HashMap<String, Any>
+    ): Response<Map<String, Any>>
+
+    @POST("api/v1/lessons/{id}/delete")
+    suspend fun lessonDelete(
+        @Path("id") lessonId: Int
+    ): Response<Map<String, Any>>
+
     @POST("api/v1/lessons/{id}/marks")
     suspend fun marksSave(
         @Path("id") lessonId: Int,

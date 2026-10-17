@@ -15,20 +15,36 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import javax.inject.Inject
 
+/** Действие сверки занятия с расписанием. */
+enum class ScheduleSyncAction { ADD, UPDATE, DELETE, UNCHANGED, UNMATCHED }
+
 /**
- * Строка расписания в предпросмотре импорта.
- * enabled=false — класс/предмет не сопоставился или занятие уже есть.
+ * Строка плана сверки дня с расписанием.
+ * actionable=true — строку можно применить (ADD/UPDATE/DELETE).
  */
-data class ScheduleImportItem(
-    val schedule: ScheduleItem,
+data class ScheduleSyncItem(
+    val action: ScheduleSyncAction,
+    /** Занятие журнала (для UPDATE/DELETE/UNCHANGED). */
+    val lessonId: Int? = null,
     val classId: Int? = null,
     val subjectId: Int? = null,
-    /** Имя сопоставленного класса журнала (для показа в предпросмотре). */
     val journalClassName: String? = null,
-    val exists: Boolean = false,
+    /** Заголовок строки: «08:00 9 Б — Информатика». */
+    val title: String,
+    /** Пояснение: diff времени/кабинета или причина. */
+    val detail: String? = null,
+    /** Целевое время начала (ADD/UPDATE). */
+    val startTime: String = "",
+    /** Целевое примечание — кабинет (ADD/UPDATE). */
+    val note: String = "",
+    /** Менять ли примечание при обновлении. */
+    val updateNote: Boolean = false,
     val selected: Boolean = false
 ) {
-    val enabled: Boolean get() = classId != null && subjectId != null && !exists
+    val actionable: Boolean
+        get() = action == ScheduleSyncAction.ADD ||
+            action == ScheduleSyncAction.UPDATE ||
+            action == ScheduleSyncAction.DELETE
 }
 
 @HiltViewModel
@@ -50,18 +66,18 @@ class DayViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
 
-    /** Предпросмотр импорта из расписания (null — диалог закрыт). */
-    private val _importItems = MutableStateFlow<List<ScheduleImportItem>?>(null)
-    val importItems = _importItems.asStateFlow()
+    /** План сверки дня с расписанием (null — диалог закрыт). */
+    private val _scheduleSyncItems = MutableStateFlow<List<ScheduleSyncItem>?>(null)
+    val scheduleSyncItems = _scheduleSyncItems.asStateFlow()
 
-    private val _importLoading = MutableStateFlow(false)
-    val importLoading = _importLoading.asStateFlow()
+    private val _scheduleSyncLoading = MutableStateFlow(false)
+    val scheduleSyncLoading = _scheduleSyncLoading.asStateFlow()
 
-    private val _isImporting = MutableStateFlow(false)
-    val isImporting = _isImporting.asStateFlow()
+    private val _isApplyingSchedule = MutableStateFlow(false)
+    val isApplyingSchedule = _isApplyingSchedule.asStateFlow()
 
-    private val _importMessage = MutableStateFlow<String?>(null)
-    val importMessage = _importMessage.asStateFlow()
+    private val _scheduleSyncMessage = MutableStateFlow<String?>(null)
+    val scheduleSyncMessage = _scheduleSyncMessage.asStateFlow()
 
     /** Идёт принудительная синхронизация. */
     private val _isSyncing = MutableStateFlow(false)
@@ -97,7 +113,7 @@ class DayViewModel @Inject constructor(
     fun setDate(date: LocalDate) {
         if (date == _selectedDate.value) return
         _selectedDate.value = date
-        _importItems.value = null
+        _scheduleSyncItems.value = null
         loadLessons()
     }
 
@@ -146,46 +162,62 @@ class DayViewModel @Inject constructor(
         }
     }
 
-    // ================== Импорт занятий из расписания ==================
+    // ================== Сверка дня с расписанием ==================
 
-    /** Загрузить расписание Безуглова С.В. на выбранный день и открыть предпросмотр. */
-    fun openImportPreview() {
-        if (_importLoading.value || _isImporting.value) return
+    /** Загрузить расписание Безуглова С.В. на выбранный день и открыть предпросмотр сверки. */
+    fun openScheduleSyncPreview() {
+        if (_scheduleSyncLoading.value || _isApplyingSchedule.value) return
         viewModelScope.launch {
-            _importLoading.value = true
-            _importItems.value = null
+            _scheduleSyncLoading.value = true
+            _scheduleSyncItems.value = null
             val date = _selectedDate.value.toString()
             when (val result = scheduleRepository.teacherSchedule(date)) {
                 is ScheduleRepository.Result.Error -> {
-                    _importLoading.value = false
-                    _importMessage.value = result.message
+                    _scheduleSyncLoading.value = false
+                    _scheduleSyncMessage.value = result.message
                 }
                 is ScheduleRepository.Result.Success -> {
                     if (result.data.isEmpty()) {
-                        _importLoading.value = false
-                        _importMessage.value = "В расписании нет занятий Безуглова С.В. на этот день"
+                        _scheduleSyncLoading.value = false
+                        _scheduleSyncMessage.value = "В расписании нет занятий Безуглова С.В. на этот день"
                     } else {
-                        _importItems.value = buildImportItems(date, result.data)
-                        _importLoading.value = false
+                        _scheduleSyncItems.value = buildSyncPlan(date, result.data)
+                        _scheduleSyncLoading.value = false
                     }
                 }
             }
         }
     }
 
-    /** Сопоставление строк расписания с классами и предметами журнала. */
-    private suspend fun buildImportItems(
+    /**
+     * Сопоставляет расписание с занятиями дня и строит план:
+     * добавить недостающие, обновить время/кабинет, удалить лишние.
+     * Уроки с отрицательным id (созданные офлайн) в сверку не берём.
+     */
+    private suspend fun buildSyncPlan(
         date: String,
-        items: List<ScheduleItem>
-    ): List<ScheduleImportItem> {
+        schedule: List<ScheduleItem>
+    ): List<ScheduleSyncItem> {
         val classes = when (val r = repository.classes()) {
             is JournalRepository.Result.Success -> r.data
             is JournalRepository.Result.Error -> emptyList()
         }
-        val existing = _lessons.value
-        return items.map { item ->
-            // Подгруппа «Информатика (7А.И2)» у класса 7А — это предмет «Информатика»
-            // у группы «7 А2» журнала: класс из расписания + номер после точки
+        val journalLessons = when (val r = repository.lessonsByDate(date)) {
+            is JournalRepository.Result.Success -> r.data
+            is JournalRepository.Result.Error -> _lessons.value
+        }
+        val byKey = journalLessons
+            .filter { it.id > 0 }
+            .groupBy { it.classId to it.subjectId }
+            .mapValues { it.value.toMutableList() }
+
+        val adds = mutableListOf<ScheduleSyncItem>()
+        val updates = mutableListOf<ScheduleSyncItem>()
+        val unchanged = mutableListOf<ScheduleSyncItem>()
+        val unmatched = mutableListOf<ScheduleSyncItem>()
+
+        for (item in schedule) {
+            // Подгруппа «8А.И2» у класса 8А — это класс журнала «8 А2».
             val groupClass = item.parallelGroup?.let { group ->
                 val parts = group.split('.')
                 val num = parts.lastOrNull()?.filter { it.isDigit() } ?: ""
@@ -194,27 +226,91 @@ class DayViewModel @Inject constructor(
             val cls = classes.firstOrNull {
                 normalizeName(it.name) == normalizeName(groupClass ?: item.className)
             }
-            var classId: Int? = null
-            var subjectId: Int? = null
-            if (cls != null) {
-                classId = cls.id
-                val subjects = subjectsFor(cls.id)
-                subjectId = subjects.firstOrNull {
+            val subjectId = cls?.let { c ->
+                subjectsFor(c.id).firstOrNull {
                     normalizeName(it.name) == normalizeName(item.subject) ||
                         normalizeName(it.shortName ?: "") == normalizeName(item.subject)
                 }?.id
             }
-            val exists = classId != null && subjectId != null &&
-                existing.any { it.classId == classId && it.subjectId == subjectId && it.date == date }
-            ScheduleImportItem(
-                schedule = item,
-                classId = classId,
+            val time = item.timeStart ?: ""
+            val roomNote = item.room?.takeIf { it.isNotBlank() }?.let { "Каб. $it" } ?: ""
+            val classLabel = item.className + (item.parallelGroup?.let { " ($it)" } ?: "")
+            val title = listOf(time.ifBlank { "—" }, classLabel, item.subject).joinToString(" ")
+
+            if (cls == null || subjectId == null) {
+                unmatched += ScheduleSyncItem(
+                    action = ScheduleSyncAction.UNMATCHED,
+                    title = title,
+                    detail = if (cls == null) "Класс не найден в журнале" else "Предмет не найден в журнале",
+                    startTime = time,
+                    note = roomNote
+                )
+                continue
+            }
+
+            val candidates = byKey[cls.id to subjectId]
+            if (candidates.isNullOrEmpty()) {
+                adds += ScheduleSyncItem(
+                    action = ScheduleSyncAction.ADD,
+                    classId = cls.id,
+                    subjectId = subjectId,
+                    journalClassName = cls.name,
+                    title = title,
+                    detail = "Новое занятие",
+                    startTime = time,
+                    note = roomNote,
+                    selected = true
+                )
+                continue
+            }
+
+            val lesson = candidates.removeAt(0)
+            val timeDiff = time.isNotBlank() && (lesson.startTime ?: "") != time
+            // Примечание трогаем только если оно пустое или в формате «Каб. …».
+            val noteChangeable = roomNote.isNotBlank() &&
+                (lesson.note.isNullOrBlank() || lesson.note.startsWith("Каб."))
+            val noteDiff = noteChangeable && lesson.note != roomNote
+            val base = ScheduleSyncItem(
+                action = ScheduleSyncAction.UNCHANGED,
+                lessonId = lesson.id,
+                classId = cls.id,
                 subjectId = subjectId,
-                journalClassName = cls?.name,
-                exists = exists,
-                selected = classId != null && subjectId != null && !exists
+                journalClassName = cls.name,
+                title = title,
+                startTime = time,
+                note = roomNote,
+                updateNote = noteDiff
+            )
+            if (timeDiff || noteDiff) {
+                val diff = listOfNotNull(
+                    if (timeDiff) "${lesson.startTime ?: "—"} → ${time.ifBlank { "—" }}" else null,
+                    if (noteDiff) "${lesson.note ?: "—"} → $roomNote" else null
+                ).joinToString(" · ")
+                updates += base.copy(action = ScheduleSyncAction.UPDATE, detail = diff, selected = true)
+            } else {
+                unchanged += base.copy(detail = "Уже соответствует")
+            }
+        }
+
+        // Оставшиеся занятия журнала — их нет в расписании: удалить.
+        val deletes = byKey.values.flatten().map { lesson ->
+            ScheduleSyncItem(
+                action = ScheduleSyncAction.DELETE,
+                lessonId = lesson.id,
+                classId = lesson.classId,
+                subjectId = lesson.subjectId,
+                journalClassName = lesson.className,
+                title = listOf(
+                    lesson.startTime ?: "—",
+                    lesson.className ?: "Класс",
+                    lesson.subjectName ?: "Предмет"
+                ).joinToString(" "),
+                detail = "Нет в расписании",
+                selected = true
             )
         }
+
+        return adds + updates + deletes + unchanged + unmatched
     }
 
     private suspend fun subjectsFor(classId: Int): List<Subject> {
@@ -231,52 +327,73 @@ class DayViewModel @Inject constructor(
     private fun normalizeName(s: String): String =
         s.uppercase().replace('Ё', 'Е').filter { !it.isWhitespace() }
 
-    fun toggleImportItem(index: Int) {
-        val current = _importItems.value ?: return
+    fun toggleScheduleSyncItem(index: Int) {
+        val current = _scheduleSyncItems.value ?: return
         if (index !in current.indices) return
         val item = current[index]
-        if (!item.enabled) return
-        _importItems.value = current.toMutableList().apply {
+        if (!item.actionable) return
+        _scheduleSyncItems.value = current.toMutableList().apply {
             set(index, item.copy(selected = !item.selected))
         }
     }
 
-    fun dismissImportPreview() {
-        if (!_isImporting.value) _importItems.value = null
+    fun dismissScheduleSyncPreview() {
+        if (!_isApplyingSchedule.value) _scheduleSyncItems.value = null
     }
 
-    /** Создать занятия журнала для выбранных строк предпросмотра. */
-    fun confirmImport() {
-        val selected = _importItems.value?.filter { it.enabled && it.selected } ?: return
-        if (selected.isEmpty() || _isImporting.value) return
+    /** Применить выбранные строки плана сверки. */
+    fun confirmScheduleSync() {
+        val selected = _scheduleSyncItems.value?.filter { it.actionable && it.selected } ?: return
+        if (selected.isEmpty() || _isApplyingSchedule.value) return
         viewModelScope.launch {
-            _isImporting.value = true
+            _isApplyingSchedule.value = true
             val date = _selectedDate.value.toString()
             var added = 0
+            var updated = 0
+            var deleted = 0
             var failed = 0
             for (item in selected) {
-                val room = item.schedule.room?.takeIf { it.isNotBlank() } ?: ""
-                val result = repository.createLesson(
-                    classId = item.classId!!,
-                    subjectId = item.subjectId!!,
-                    date = date,
-                    startTime = item.schedule.timeStart ?: "",
-                    note = if (room.isNotEmpty()) "Каб. $room" else ""
-                )
-                if (result is JournalRepository.Result.Success) added++ else failed++
+                when (item.action) {
+                    ScheduleSyncAction.ADD -> {
+                        val r = repository.createLesson(
+                            classId = item.classId!!,
+                            subjectId = item.subjectId!!,
+                            date = date,
+                            startTime = item.startTime,
+                            note = item.note
+                        )
+                        if (r is JournalRepository.Result.Success) added++ else failed++
+                    }
+                    ScheduleSyncAction.UPDATE -> {
+                        val r = repository.updateLesson(
+                            lessonId = item.lessonId!!,
+                            startTime = item.startTime,
+                            note = item.note,
+                            updateNote = item.updateNote
+                        )
+                        if (r is JournalRepository.Result.Success) updated++ else failed++
+                    }
+                    ScheduleSyncAction.DELETE -> {
+                        val r = repository.deleteLesson(item.lessonId!!)
+                        if (r is JournalRepository.Result.Success) deleted++ else failed++
+                    }
+                    else -> {}
+                }
             }
-            _isImporting.value = false
-            _importItems.value = null
+            _isApplyingSchedule.value = false
+            _scheduleSyncItems.value = null
             loadLessons()
-            _importMessage.value = buildString {
-                append("Добавлено занятий: $added")
-                if (failed > 0) append(", с ошибками: $failed")
+            _scheduleSyncMessage.value = buildString {
+                append("Добавлено: $added")
+                append(", обновлено: $updated")
+                append(", удалено: $deleted")
+                if (failed > 0) append(", ошибок: $failed")
             }
         }
     }
 
-    /** Сбросить показанное уведомление (после снекбара). */
-    fun consumeImportMessage() {
-        _importMessage.value = null
+    /** Сбросить показанное уведомление сверки (после снекбара). */
+    fun consumeScheduleSyncMessage() {
+        _scheduleSyncMessage.value = null
     }
 }

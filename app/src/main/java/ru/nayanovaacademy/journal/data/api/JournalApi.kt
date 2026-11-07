@@ -65,7 +65,7 @@ interface JournalApi {
     suspend fun homeworkSave(
         @Path("id") lessonId: Int,
         @Body body: HashMap<String, Any>
-    ): Response<Map<String, Boolean>>
+    ): Response<HomeworkSaveResponse>
 
     @POST("api/v1/homework/{id}/delete")
     suspend fun homeworkDelete(

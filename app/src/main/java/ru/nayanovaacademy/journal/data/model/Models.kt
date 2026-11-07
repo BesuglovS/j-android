@@ -117,6 +117,12 @@ data class Homework(
     @SerializedName("contest_tasks") val contestTasks: List<HomeworkContestTask> = emptyList()
 )
 
+/** Ответ API сохранения ДЗ: {"ok": true, "homework_id": 117}. */
+data class HomeworkSaveResponse(
+    val ok: Boolean = false,
+    @SerializedName("homework_id") val homeworkId: Int = 0
+)
+
 data class Quarter(
     val id: Int,
     val name: String,

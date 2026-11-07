@@ -417,7 +417,9 @@ class SyncManager @Inject constructor(
                 lessonId = lessonId,
                 title = payload.title,
                 description = payload.description,
-                dueDate = payload.dueDate
+                dueDate = payload.dueDate,
+                quizzes = payload.quizzes,
+                contestTasks = payload.contestTasks
             )
             detail.copy(homework = hw)
         }
@@ -803,6 +805,8 @@ class SyncManager @Inject constructor(
             put("title", p.title)
             put("description", p.description)
             put("due_date", p.dueDate)
+            put("quizzes", p.quizzes)
+            put("contest_tasks", p.contestTasks)
         }
         val resp = api.homeworkSave(lessonId, body)
         if (!resp.isSuccessful) return failure(resp)

@@ -31,7 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
-import ru.nayanovaacademy.journal.data.model.Student
+import ru.nayanovaacademy.journal.data.model.*
 import ru.nayanovaacademy.journal.ui.status.OfflineStatusBanner
 
 // Оценка не может быть 1: только 2, 3, 4, 5
@@ -66,10 +66,22 @@ fun JournalScreen(
     val localRemarks by viewModel.localRemarks.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val saveMessage by viewModel.saveMessage.collectAsState()
+    val homeworkCatalog by viewModel.homeworkCatalog.collectAsState()
+    val homeworkCatalogLoading by viewModel.homeworkCatalogLoading.collectAsState()
+    val homeworkCatalogError by viewModel.homeworkCatalogError.collectAsState()
+    val homeworkPreview by viewModel.homeworkPreview.collectAsState()
+    val homeworkPreviewLoading by viewModel.homeworkPreviewLoading.collectAsState()
+    val homeworkPreviewError by viewModel.homeworkPreviewError.collectAsState()
     var showHomeworkDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(lessonId) {
         viewModel.loadLesson(lessonId)
+    }
+
+    LaunchedEffect(showHomeworkDialog) {
+        if (showHomeworkDialog && homeworkCatalog == null) {
+            viewModel.loadHomeworkCatalog()
+        }
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -151,6 +163,18 @@ fun JournalScreen(
                     localRemarks = localRemarks,
                     hasPreviousHomework = detail?.previousHomework != null,
                     previousHomework = detail?.previousHomework,
+                    previousAttendance = detail?.previousAttendance ?: emptyMap(),
+                    homeworkPreview = homeworkPreview,
+                    homeworkPreviewLoading = homeworkPreviewLoading,
+                    homeworkPreviewError = homeworkPreviewError,
+                    onRefreshPreview = {
+                        detail?.previousHomework?.let { prev ->
+                            viewModel.loadHomeworkPreview(lessonId, prev.id, true)
+                        }
+                    },
+                    onApplyAutoHomework = { grades, comment ->
+                        viewModel.applyAutoHomeworkGrades(lessonId, grades, comment)
+                    },
                     // Итоговые оценки только открытого урока: пересдача
                     // привязывается к открытой работе, а не к более поздней
                     // работе того же типа из другого урока.
@@ -174,9 +198,13 @@ fun JournalScreen(
     if (showHomeworkDialog) {
         HomeworkDialog(
             existing = detail?.homework,
-            onSave = { title, description, dueDate ->
+            catalog = homeworkCatalog,
+            catalogLoading = homeworkCatalogLoading,
+            catalogError = homeworkCatalogError,
+            onRefreshCatalog = { viewModel.loadHomeworkCatalog(true) },
+            onSave = { title, description, dueDate, quizzes, contestTasks ->
                 showHomeworkDialog = false
-                viewModel.saveHomework(lessonId, title, description, dueDate)
+                viewModel.saveHomework(lessonId, title, description, dueDate, quizzes, contestTasks)
             },
             onDelete = detail?.homework?.let { hw ->
                 { viewModel.deleteHomework(hw.id, lessonId) }
@@ -193,7 +221,13 @@ fun JournalGrid(
     localAttendance: Map<Int, ru.nayanovaacademy.journal.data.model.AttendanceEntry>,
     localRemarks: Map<Int, List<JournalViewModel.RemarkRef>>,
     hasPreviousHomework: Boolean,
-    previousHomework: ru.nayanovaacademy.journal.data.model.Homework?,
+    previousHomework: Homework?,
+    previousAttendance: Map<String, AttendanceRecord>,
+    homeworkPreview: HomeworkGradePreview?,
+    homeworkPreviewLoading: Boolean,
+    homeworkPreviewError: String?,
+    onRefreshPreview: () -> Unit,
+    onApplyAutoHomework: (Map<Int, Int>, String) -> Unit,
     currentMarks: Map<String, List<ru.nayanovaacademy.journal.data.model.CurrentMark>>,
     onAddMark: (Int, Int, String, String, Boolean, String) -> Unit,
     onAddMarkBulk: (List<Pair<Int, Int>>, String, String) -> Unit,
@@ -274,6 +308,7 @@ fun JournalGrid(
                         }
                     }
                     TableCell("Посещ.", 110.dp, 40.dp, Alignment.Center, 11.sp)
+                    TableCell("Посещ. прошл.", 90.dp, 40.dp, Alignment.Center, 9.sp)
                     TableCell("Замечания", 120.dp, 40.dp, Alignment.Center, 11.sp)
                     TableCell("Телефон", 80.dp, 40.dp, Alignment.Center, 11.sp)
                 }
@@ -362,12 +397,27 @@ fun JournalGrid(
                             ) {
                                 val hwMarks = (localMarks[student.id] ?: emptyList())
                                     .filter { it.workType == HOMEWORK_TYPE }
+                                val predictedGrade = homeworkPreview
+                                    ?.takeIf { it.autoAvailable }
+                                    ?.students
+                                    ?.firstOrNull { it.studentId == student.id }
+                                    ?.takeIf { it.hasData }
+                                    ?.grade
                                 if (hwMarks.isEmpty()) {
-                                    Text(
-                                        "  +",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    if (predictedGrade != null) {
+                                        Text(
+                                            "≈$predictedGrade",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = markColor(predictedGrade).copy(alpha = 0.7f)
+                                        )
+                                    } else {
+                                        Text(
+                                            "  +",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 } else {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 4.dp),
@@ -391,6 +441,14 @@ fun JournalGrid(
                             onLongPress = { lateDialogStudentId = student.id },
                             modifier = Modifier
                                 .width(110.dp)
+                                .height(48.dp)
+                        )
+
+                        // Посещаемость предыдущего урока — справочно (read-only)
+                        PreviousAttendanceCell(
+                            record = previousAttendance[student.id.toString()],
+                            modifier = Modifier
+                                .width(90.dp)
                                 .height(48.dp)
                         )
 
@@ -526,9 +584,18 @@ fun JournalGrid(
             homework = previousHomework,
             students = students,
             localMarks = localMarks,
+            localAttendance = localAttendance,
+            preview = homeworkPreview,
+            previewLoading = homeworkPreviewLoading,
+            previewError = homeworkPreviewError,
+            onRefreshPreview = onRefreshPreview,
             onApply = { marks, comment ->
                 showHomeworkGradeDialog = false
                 onAddMarkBulk(marks, HOMEWORK_TYPE, comment)
+            },
+            onApplyAuto = { grades, comment ->
+                showHomeworkGradeDialog = false
+                onApplyAutoHomework(grades, comment)
             },
             onDismiss = { showHomeworkGradeDialog = false }
         )
@@ -1059,82 +1126,367 @@ fun BulkMarkDialog(
 }
 
 /**
- * Диалог домашнего задания: вносится на текущем уроке, выполняется к
- * следующему. Если ДЗ уже задано — поля предзаполнены.
+ * Диалог домашнего задания: текст, срок, квизы python-web (пройти на 100%)
+ * и отдельные задачи contest-web. Если ДЗ уже задано — выбор предзаполнен.
  */
 @Composable
 fun HomeworkDialog(
-    existing: ru.nayanovaacademy.journal.data.model.Homework?,
-    onSave: (title: String, description: String, dueDate: String) -> Unit,
+    existing: Homework?,
+    catalog: HomeworkCatalog?,
+    catalogLoading: Boolean,
+    catalogError: String?,
+    onRefreshCatalog: () -> Unit,
+    onSave: (
+        title: String,
+        description: String,
+        dueDate: String,
+        quizzes: List<HomeworkQuiz>,
+        contestTasks: List<HomeworkContestTask>
+    ) -> Unit,
     onDelete: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
-    var title by remember { mutableStateOf(existing?.title ?: "") }
-    var description by remember { mutableStateOf(existing?.description ?: "") }
-    var dueDate by remember { mutableStateOf(existing?.dueDate ?: "") }
+    var title by remember(existing?.id) { mutableStateOf(existing?.title ?: "") }
+    var description by remember(existing?.id) { mutableStateOf(existing?.description ?: "") }
+    var dueDate by remember(existing?.id) { mutableStateOf(existing?.dueDate ?: "") }
+    var selectedQuizzes by remember(existing?.id) {
+        mutableStateOf(existing?.quizzes?.map { it.lessonNumber }?.toSet() ?: emptySet())
+    }
+    var selectedTasks by remember(existing?.id) {
+        mutableStateOf(
+            existing?.contestTasks?.map { it.contestId to it.taskId }?.toSet() ?: emptySet()
+        )
+    }
+    var expandedContests by remember(existing?.id) {
+        mutableStateOf(existing?.contestTasks?.map { it.contestId }?.toSet() ?: emptySet())
+    }
     var showDeleteConfirm by remember { mutableStateOf(false) }
-    val canSave = title.isNotBlank() || description.isNotBlank()
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Домашнее задание") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Задаётся на этом уроке, выполнить — к следующему занятию.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Задание") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = description,
-                    onValueChange = { description = it },
-                    label = { Text("Подробности (необязательно)") },
-                    maxLines = 3,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = dueDate,
-                    onValueChange = { dueDate = it },
-                    label = { Text("Срок, ГГГГ-ММ-ДД (необязательно)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            Row {
-                if (existing != null && onDelete != null) {
-                    TextButton(
-                        onClick = { showDeleteConfirm = true },
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Text("Удалить")
-                    }
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                Button(
-                    enabled = canSave,
-                    onClick = { onSave(title.trim(), description.trim(), dueDate.trim()) }
-                ) {
-                    Text("Сохранить")
-                }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Отмена")
+    // Названия: сохранённые в ДЗ + свежие из каталога (если загрузился).
+    val quizTitleByNumber = remember(existing, catalog) {
+        val map = LinkedHashMap<Int, String>()
+        existing?.quizzes?.forEach { map[it.lessonNumber] = it.title.orEmpty() }
+        catalog?.quizzes?.forEach { map[it.lessonNumber] = it.title }
+        map
+    }
+    val taskInfo = remember(existing, catalog) {
+        val map = LinkedHashMap<Pair<Int, Int>, HomeworkContestTask>()
+        existing?.contestTasks?.forEach { map[it.contestId to it.taskId] = it }
+        catalog?.contests?.forEach { c ->
+            c.tasks.forEach { t ->
+                map[c.id to t.id] = HomeworkContestTask(c.id, t.id, c.title, t.title)
             }
         }
-    )
+        map
+    }
+    val canSave = title.isNotBlank() || description.isNotBlank() ||
+        selectedQuizzes.isNotEmpty() || selectedTasks.isNotEmpty()
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                modifier = Modifier
+                    .widthIn(max = 720.dp)
+                    .fillMaxWidth()
+                    .fillMaxHeight(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Домашнее задание", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "Задаётся на этом уроке, выполнить — к следующему занятию.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = title,
+                            onValueChange = { title = it },
+                            label = { Text("Задание") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = description,
+                            onValueChange = { description = it },
+                            label = { Text("Подробности (необязательно)") },
+                            maxLines = 3,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = dueDate,
+                            onValueChange = { dueDate = it },
+                            label = { Text("Срок, ГГГГ-ММ-ДД (необязательно)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider()
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // ---- Квизы ----
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Квизы (пройти на 100%)",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                "выбрано: ${selectedQuizzes.size}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            IconButton(onClick = onRefreshCatalog, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Default.Refresh, "Обновить каталог", modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        if (catalogLoading) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Загрузка каталога…", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        if (!catalogError.isNullOrBlank()) {
+                            Text(
+                                "Каталог: $catalogError",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        if (quizTitleByNumber.isNotEmpty()) {
+                            Row {
+                                TextButton(onClick = {
+                                    selectedQuizzes = quizTitleByNumber.keys.toSet()
+                                }) { Text("Все") }
+                                TextButton(onClick = { selectedQuizzes = emptySet() }) { Text("Снять") }
+                            }
+                            quizTitleByNumber.entries.sortedBy { it.key }.forEach { entry ->
+                                val num = entry.key
+                                val label = buildString {
+                                    append("Урок ").append(num)
+                                    if (entry.value.isNotBlank()) append(" — ").append(entry.value)
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            selectedQuizzes = if (num in selectedQuizzes) {
+                                                selectedQuizzes - num
+                                            } else {
+                                                selectedQuizzes + num
+                                            }
+                                        }
+                                        .padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = num in selectedQuizzes,
+                                        onCheckedChange = null
+                                    )
+                                    Text(
+                                        label,
+                                        fontSize = 13.sp,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        } else if (!catalogLoading) {
+                            Text(
+                                "Нет доступных квизов",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider()
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // ---- Задачи из контестов ----
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Задачи из контестов",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                "выбрано: ${selectedTasks.size}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        val groupedTasks = taskInfo.values.groupBy { it.contestId }.toSortedMap()
+                        if (groupedTasks.isEmpty()) {
+                            if (!catalogLoading) {
+                                Text(
+                                    "Нет доступных задач",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        } else {
+                            groupedTasks.forEach { (cid, tasks) ->
+                                val contestTitle = tasks.firstOrNull()?.contestTitle
+                                    ?.takeIf { it.isNotBlank() } ?: "Контест $cid"
+                                val contestKeys = tasks.map { cid to it.taskId }.toSet()
+                                val selectedInContest = contestKeys.count { it in selectedTasks }
+                                val allSelected = contestKeys.isNotEmpty() &&
+                                    selectedTasks.containsAll(contestKeys)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            expandedContests = if (cid in expandedContests) {
+                                                expandedContests - cid
+                                            } else {
+                                                expandedContests + cid
+                                            }
+                                        }
+                                        .padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        if (cid in expandedContests) Icons.Default.ExpandLess
+                                        else Icons.Default.ExpandMore,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            contestTitle,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            "выбрано $selectedInContest из ${contestKeys.size}",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    TextButton(onClick = {
+                                        selectedTasks = if (allSelected) {
+                                            selectedTasks - contestKeys
+                                        } else {
+                                            selectedTasks + contestKeys
+                                        }
+                                    }) {
+                                        Text(if (allSelected) "Снять" else "Все")
+                                    }
+                                }
+                                if (cid in expandedContests) {
+                                    tasks.sortedBy { it.taskId }.forEach { task ->
+                                        val key = cid to task.taskId
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    selectedTasks = if (key in selectedTasks) {
+                                                        selectedTasks - key
+                                                    } else {
+                                                        selectedTasks + key
+                                                    }
+                                                }
+                                                .padding(start = 24.dp, top = 2.dp, bottom = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Checkbox(
+                                                checked = key in selectedTasks,
+                                                onCheckedChange = null
+                                            )
+                                            Text(
+                                                task.taskTitle?.takeIf { it.isNotBlank() }
+                                                    ?: "Задача ${task.taskId}",
+                                                fontSize = 12.sp,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (existing != null && onDelete != null) {
+                            TextButton(
+                                onClick = { showDeleteConfirm = true },
+                                colors = ButtonDefaults.textButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.error
+                                )
+                            ) {
+                                Text("Удалить")
+                            }
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
+                        TextButton(onClick = onDismiss) { Text("Отмена") }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            enabled = canSave,
+                            onClick = {
+                                val quizzes = selectedQuizzes.sorted().map { num ->
+                                    HomeworkQuiz(
+                                        lessonNumber = num,
+                                        title = quizTitleByNumber[num]?.takeIf { it.isNotBlank() }
+                                    )
+                                }
+                                val tasks = selectedTasks
+                                    .sortedWith(compareBy({ it.first }, { it.second }))
+                                    .map { (cid, tid) ->
+                                        val info = taskInfo[cid to tid]
+                                        HomeworkContestTask(
+                                            contestId = cid,
+                                            taskId = tid,
+                                            contestTitle = info?.contestTitle,
+                                            taskTitle = info?.taskTitle
+                                        )
+                                    }
+                                onSave(title.trim(), description.trim(), dueDate.trim(), quizzes, tasks)
+                            }
+                        ) {
+                            Text("Сохранить")
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if (showDeleteConfirm) {
         AlertDialog(
@@ -1160,23 +1512,52 @@ fun HomeworkDialog(
 }
 
 /**
- * Диалог домашнего задания: текст задания (что задано, подробности, срок сдачи)
- * и выставление оценок за это ДЗ всему классу. «За что» зафиксировано как ДЗ.
- * Значение оценки (2–5) выбирается отдельно у каждого ученика; кому не выбрано —
- * тот пропускается. Повторное нажатие снимает выбор.
+ * Диалог оценок за прошлое ДЗ. Если в ДЗ выбраны квизы/задачи — показывает
+ * предварительно рассчитанную оценку, посещаемость текущего и прошлого урока
+ * и позволяет выбрать, кому её выставить. Если требований нет — обычное
+ * ручное выставление оценки 2–5.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeworkGradeDialog(
-    homework: ru.nayanovaacademy.journal.data.model.Homework?,
+    homework: Homework?,
     students: List<Student>,
     localMarks: Map<Int, List<JournalViewModel.LocalMark>>,
+    localAttendance: Map<Int, AttendanceEntry>,
+    preview: HomeworkGradePreview?,
+    previewLoading: Boolean,
+    previewError: String?,
+    onRefreshPreview: () -> Unit,
     onApply: (marks: List<Pair<Int, Int>>, comment: String) -> Unit,
+    onApplyAuto: (grades: Map<Int, Int>, comment: String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var comment by remember { mutableStateOf("") }
-    // Выбранная оценка на ученика: studentId -> значение (2..5)
+    // Ручной режим: studentId -> значение (2..5)
     var selectedMarks by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
+
+    val hasRequirements = homework != null &&
+        (homework.quizzes.orEmpty().isNotEmpty() || homework.contestTasks.orEmpty().isNotEmpty())
+
+    // По умолчанию отмечаем присутствующих (present/late), у кого есть данные.
+    // Текущую посещаемость берём из локального состояния: учитель мог только
+    // что её изменить, а preview мог быть загружен раньше.
+    val autoInitial = remember(preview, localAttendance) {
+        if (preview?.autoAvailable != true) {
+            emptyMap()
+        } else {
+            preview.students
+                .filter {
+                    // Нет записи — как в журнале, считаем присутствующим.
+                    val status = localAttendance[it.studentId]?.status
+                        ?: it.attendanceCurrent?.status
+                        ?: "present"
+                    it.hasData && it.grade != null && (status == "present" || status == "late")
+                }
+                .associate { it.studentId to it.grade!! }
+        }
+    }
+    var autoSelected by remember(preview, localAttendance) { mutableStateOf(autoInitial) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1190,7 +1571,7 @@ fun HomeworkGradeDialog(
         ) {
             Surface(
                 modifier = Modifier
-                    .widthIn(max = 640.dp)
+                    .widthIn(max = 720.dp)
                     .fillMaxWidth()
                     .fillMaxHeight(),
                 shape = RoundedCornerShape(16.dp),
@@ -1224,128 +1605,351 @@ fun HomeworkGradeDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                        if (hasRequirements) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Требования: квизов — ${homework.quizzes.orEmpty().size}, " +
+                                    "задач — ${homework.contestTasks.orEmpty().size}",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
                     HorizontalDivider()
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Text("Выставить оценки за ДЗ всему классу", style = MaterialTheme.typography.titleSmall)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = comment,
-                        onValueChange = { comment = it },
-                        label = { Text("Комментарий (необязательно)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "Оценки: ${selectedMarks.size} из ${students.size}",
-                            style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (selectedMarks.isNotEmpty()) {
-                            TextButton(onClick = { selectedMarks = emptyMap() }) {
-                                Text("Сбросить")
+                    if (hasRequirements) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Автоматическая оценка за ДЗ",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = onRefreshPreview, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Default.Refresh, "Обновить расчёт", modifier = Modifier.size(18.dp))
                             }
                         }
-                    }
+                        Text(
+                            "Квиз = 1 балл, задача = 1 балл. Меньше 1/2 — 2; " +
+                                "верхняя половина: 3, 4, 5 (5 — от 5/6 баллов).",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
 
-                    // Список учеников с текущими оценками за ДЗ и кнопками 2–5
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        students.forEach { student ->
-                            val selected = selectedMarks[student.id]
-                            val existing = (localMarks[student.id] ?: emptyList())
-                                .filter { it.workType == HOMEWORK_TYPE }
+                        if (previewLoading) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Считаем предварительную оценку…", fontSize = 13.sp)
+                            }
+                        } else if (preview == null) {
+                            if (!previewError.isNullOrBlank()) {
+                                Text(
+                                    previewError,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                            Button(onClick = onRefreshPreview) {
+                                Text("Рассчитать")
+                            }
+                        } else {
+                            if (!previewError.isNullOrBlank()) {
+                                Text(
+                                    previewError,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                            preview.errors.forEach { err ->
+                                Text(err, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                            }
+                            if (!preview.autoAvailable) {
+                                Text(
+                                    "Авто-выставление недоступно: нет полных данных прогресса.",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 2.dp),
+                                modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        "${student.lastName} ${student.firstName}",
-                                        fontSize = 13.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    if (existing.isNotEmpty()) {
-                                        Text(
-                                            "уже: " + existing.joinToString(" ") {
-                                                it.value.toString() + if (!it.isCurrent) "(стар.)" else ""
-                                            },
-                                            fontSize = 10.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                Text(
+                                    "Выбрано: ${autoSelected.size} из ${preview.students.size}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    enabled = preview.autoAvailable,
+                                    onClick = {
+                                        autoSelected = preview.students
+                                            .filter { it.hasData && it.grade != null }
+                                            .associate { it.studentId to it.grade!! }
+                                    }
+                                ) { Text("Все") }
+                                TextButton(
+                                    enabled = preview.autoAvailable,
+                                    onClick = { autoSelected = emptyMap() }
+                                ) {
+                                    Text("Снять")
+                                }
+                            }
+
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                preview.students.forEach { row ->
+                                    val student = students.find { it.id == row.studentId }
+                                    val name = row.studentName.ifBlank {
+                                        student?.let { "${it.lastName} ${it.firstName}" }
+                                            ?: "Ученик ${row.studentId}"
+                                    }
+                                    val grade = row.grade
+                                    val canSelect = preview.autoAvailable && row.hasData && grade != null
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(
+                                            checked = row.studentId in autoSelected,
+                                            enabled = canSelect,
+                                            onCheckedChange = { checked ->
+                                                autoSelected = if (checked && grade != null) {
+                                                    autoSelected + (row.studentId to grade)
+                                                } else {
+                                                    autoSelected - row.studentId
+                                                }
+                                            }
                                         )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                name,
+                                                fontSize = 13.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                "Баллы: ${row.points}/${row.maxPoints}" +
+                                                    (row.existingMark?.let { " · уже: $it" } ?: ""),
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            val localAtt = localAttendance[row.studentId]
+                                            val currentSummary = localAtt?.let {
+                                                AttendanceSummary(it.status, it.lateMinutes)
+                                            } ?: row.attendanceCurrent
+                                            Text(
+                                                "Посещ.: тек. ${attendanceLabel(currentSummary)}, " +
+                                                    "прошл. ${attendanceLabel(row.attendancePrevious)}",
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            if (!row.hasData) {
+                                                Text(
+                                                    "нет данных прогресса",
+                                                    fontSize = 10.sp,
+                                                    color = MaterialTheme.colorScheme.error
+                                                )
+                                            }
+                                        }
+                                        if (grade != null) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(34.dp)
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(markColor(grade).copy(alpha = 0.15f))
+                                                    .border(
+                                                        1.dp,
+                                                        markColor(grade).copy(alpha = 0.6f),
+                                                        RoundedCornerShape(6.dp)
+                                                    ),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    grade.toString(),
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = markColor(grade)
+                                                )
+                                            }
+                                        } else {
+                                            Text("—", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    VALID_MARKS.forEach { value ->
-                                        val isSel = selected == value
-                                        Box(
-                                            modifier = Modifier
-                                                .size(30.dp)
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(markColor(value).copy(alpha = if (isSel) 0.35f else 0.12f))
-                                                .border(
-                                                    if (isSel) 2.dp else 1.dp,
-                                                    markColor(value).copy(alpha = if (isSel) 1f else 0.4f),
-                                                    RoundedCornerShape(6.dp)
-                                                )
-                                                .clickable {
-                                                    selectedMarks = if (isSel)
-                                                        selectedMarks - student.id
-                                                    else
-                                                        selectedMarks + (student.id to value)
-                                                },
-                                            contentAlignment = Alignment.Center
-                                        ) {
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = comment,
+                                onValueChange = { comment = it },
+                                label = { Text("Комментарий (необязательно)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton(onClick = onDismiss) { Text("Отмена") }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    enabled = preview.autoAvailable && autoSelected.isNotEmpty(),
+                                    onClick = {
+                                        onApplyAuto(autoSelected, comment.trim())
+                                    }
+                                ) {
+                                    Text("Выставить (${autoSelected.size})")
+                                }
+                            }
+                        }
+                    } else {
+                        // ---- Ручной режим (нет квизов/задач в ДЗ) ----
+                        Text(
+                            "Выставить оценки за ДЗ всему классу",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = comment,
+                            onValueChange = { comment = it },
+                            label = { Text("Комментарий (необязательно)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Оценки: ${selectedMarks.size} из ${students.size}",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (selectedMarks.isNotEmpty()) {
+                                TextButton(onClick = { selectedMarks = emptyMap() }) {
+                                    Text("Сбросить")
+                                }
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            students.forEach { student ->
+                                val selected = selectedMarks[student.id]
+                                val existing = (localMarks[student.id] ?: emptyList())
+                                    .filter { it.workType == HOMEWORK_TYPE }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            "${student.lastName} ${student.firstName}",
+                                            fontSize = 13.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (existing.isNotEmpty()) {
                                             Text(
-                                                value.toString(),
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = markColor(value)
+                                                "уже: " + existing.joinToString(" ") {
+                                                    it.value.toString() + if (!it.isCurrent) "(стар.)" else ""
+                                                },
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
+                                        }
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        VALID_MARKS.forEach { value ->
+                                            val isSel = selected == value
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(30.dp)
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(markColor(value).copy(alpha = if (isSel) 0.35f else 0.12f))
+                                                    .border(
+                                                        if (isSel) 2.dp else 1.dp,
+                                                        markColor(value).copy(alpha = if (isSel) 1f else 0.4f),
+                                                        RoundedCornerShape(6.dp)
+                                                    )
+                                                    .clickable {
+                                                        selectedMarks = if (isSel)
+                                                            selectedMarks - student.id
+                                                        else
+                                                            selectedMarks + (student.id to value)
+                                                    },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    value.toString(),
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = markColor(value)
+                                                )
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(onClick = onDismiss) {
-                            Text("Отмена")
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            enabled = selectedMarks.isNotEmpty(),
-                            onClick = {
-                                onApply(selectedMarks.map { it.key to it.value }, comment.trim())
-                            }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Добавить (${selectedMarks.size})")
+                            TextButton(onClick = onDismiss) { Text("Отмена") }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                enabled = selectedMarks.isNotEmpty(),
+                                onClick = {
+                                    onApply(selectedMarks.map { it.key to it.value }, comment.trim())
+                                }
+                            ) {
+                                Text("Добавить (${selectedMarks.size})")
+                            }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+/** Короткая подпись посещаемости для диалога авто-оценки. */
+private fun attendanceLabel(summary: AttendanceSummary?): String {
+    return when (summary?.status) {
+        "present" -> "был"
+        "late" -> summary.lateMinutes?.takeIf { it > 0 }?.let { "опозд. ${it}м" } ?: "опозд."
+        "absent" -> "не был"
+        else -> "—"
     }
 }
 
@@ -1390,6 +1994,30 @@ fun LateMinutesDialog(
             }
         }
     )
+}
+
+/** Справочная посещаемость предыдущего урока (только просмотр). */
+@Composable
+private fun PreviousAttendanceCell(record: AttendanceRecord?, modifier: Modifier = Modifier) {
+    val status = record?.status
+    val (icon, color, label) = when (status) {
+        "present" -> Triple(Icons.Default.CheckCircle, Color(0xFF4CAF50), "был")
+        "late" -> Triple(
+            Icons.Default.Schedule,
+            Color(0xFFFF9800),
+            record?.lateMinutes?.takeIf { it > 0 }?.let { "оп.${it}м" } ?: "опозд."
+        )
+        "absent" -> Triple(Icons.Default.Cancel, Color(0xFFE53935), "не был")
+        else -> Triple(Icons.Default.HelpOutline, Color.Gray, "—")
+    }
+    Column(
+        modifier = modifier.padding(2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(16.dp))
+        Text(label, fontSize = 9.sp, color = color, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
 }
 
 /** Переключатель посещаемости: короткое нажатие — следующий статус

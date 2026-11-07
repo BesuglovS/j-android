@@ -93,12 +93,28 @@ data class AttendanceRecord(
     @SerializedName("created_at") val createdAt: String?
 )
 
+/** Квиз python-курса, который класс должен пройти на 100%. */
+data class HomeworkQuiz(
+    @SerializedName("lesson_number") val lessonNumber: Int,
+    val title: String? = null
+)
+
+/** Задача contest-web, которую нужно решить в рамках ДЗ. */
+data class HomeworkContestTask(
+    @SerializedName("contest_id") val contestId: Int,
+    @SerializedName("task_id") val taskId: Int,
+    @SerializedName("contest_title") val contestTitle: String? = null,
+    @SerializedName("task_title") val taskTitle: String? = null
+)
+
 data class Homework(
     val id: Int,
     @SerializedName("lesson_id") val lessonId: Int,
     val title: String?,
     val description: String?,
-    @SerializedName("due_date") val dueDate: String?
+    @SerializedName("due_date") val dueDate: String?,
+    val quizzes: List<HomeworkQuiz> = emptyList(),
+    @SerializedName("contest_tasks") val contestTasks: List<HomeworkContestTask> = emptyList()
 )
 
 data class Quarter(
@@ -122,7 +138,86 @@ data class LessonDetail(
     val homework: Homework? = null,
     // ДЗ с предыдущего урока (тот же класс и предмет), если задано
     @SerializedName("previous_homework") val previousHomework: Homework? = null,
-    @SerializedName("previous_lesson_date") val previousLessonDate: String? = null
+    @SerializedName("previous_lesson_date") val previousLessonDate: String? = null,
+    @SerializedName("previous_lesson_id") val previousLessonId: Int? = null,
+    // Посещаемость предыдущего урока (studentId -> запись)
+    @SerializedName("previous_attendance") val previousAttendance: Map<String, AttendanceRecord> = emptyMap()
+)
+
+/** Краткая запись посещаемости для предварительной оценки ДЗ. */
+data class AttendanceSummary(
+    val status: String? = null,
+    @SerializedName("late_minutes") val lateMinutes: Int? = null
+)
+
+/** Элемент каталога: квиз python-курса. */
+data class QuizCatalogItem(
+    @SerializedName("lesson_number") val lessonNumber: Int,
+    val title: String = ""
+)
+
+/** Элемент каталога: задача контеста. */
+data class ContestTaskCatalogItem(
+    val id: Int,
+    val title: String = ""
+)
+
+/** Элемент каталога: контест с задачами. */
+data class ContestCatalogItem(
+    val id: Int,
+    val title: String = "",
+    val tasks: List<ContestTaskCatalogItem> = emptyList()
+)
+
+/** Каталог требований ДЗ. */
+data class HomeworkCatalog(
+    val quizzes: List<QuizCatalogItem> = emptyList(),
+    val contests: List<ContestCatalogItem> = emptyList(),
+    val errors: List<String> = emptyList()
+)
+
+/** Результат квиза в предварительной оценке. */
+data class HomeworkQuizResult(
+    @SerializedName("lesson_number") val lessonNumber: Int,
+    val title: String? = null,
+    val score: Int? = null,
+    val done: Boolean = false
+)
+
+/** Результат задачи в предварительной оценке. */
+data class HomeworkTaskResult(
+    @SerializedName("contest_id") val contestId: Int,
+    @SerializedName("task_id") val taskId: Int,
+    @SerializedName("contest_title") val contestTitle: String? = null,
+    val title: String? = null,
+    val done: Boolean = false
+)
+
+/** Предварительная оценка одного ученика за ДЗ. */
+data class HomeworkStudentGrade(
+    @SerializedName("student_id") val studentId: Int,
+    @SerializedName("student_name") val studentName: String = "",
+    @SerializedName("external_id") val externalId: Int? = null,
+    val points: Int = 0,
+    @SerializedName("max_points") val maxPoints: Int = 0,
+    val grade: Int? = null,
+    @SerializedName("has_data") val hasData: Boolean = false,
+    @SerializedName("quiz_results") val quizResults: List<HomeworkQuizResult> = emptyList(),
+    @SerializedName("task_results") val taskResults: List<HomeworkTaskResult> = emptyList(),
+    @SerializedName("attendance_current") val attendanceCurrent: AttendanceSummary? = null,
+    @SerializedName("attendance_previous") val attendancePrevious: AttendanceSummary? = null,
+    @SerializedName("existing_mark") val existingMark: Int? = null
+)
+
+/** Предварительный расчёт оценок за ДЗ. */
+data class HomeworkGradePreview(
+    val homework: Homework? = null,
+    @SerializedName("max_points") val maxPoints: Int = 0,
+    @SerializedName("auto_available") val autoAvailable: Boolean = false,
+    val errors: List<String> = emptyList(),
+    @SerializedName("current_lesson_id") val currentLessonId: Int = 0,
+    @SerializedName("previous_lesson_id") val previousLessonId: Int? = null,
+    val students: List<HomeworkStudentGrade> = emptyList()
 )
 
 data class AttendanceEntry(

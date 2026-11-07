@@ -72,6 +72,18 @@ interface JournalApi {
         @Path("id") homeworkId: Int
     ): Response<Map<String, Boolean>>
 
+    @GET("api/v1/homework/catalog")
+    suspend fun homeworkCatalog(
+        @Query("refresh") refresh: Boolean = false
+    ): Response<HomeworkCatalog>
+
+    @GET("api/v1/lessons/{id}/homework/preview")
+    suspend fun homeworkPreview(
+        @Path("id") lessonId: Int,
+        @Query("homework_id") homeworkId: Int,
+        @Query("refresh") refresh: Boolean = false
+    ): Response<HomeworkGradePreview>
+
     @GET("api/v1/students")
     suspend fun students(@Query("class_id") classId: Int = 0): Response<Map<String, List<Student>>>
 

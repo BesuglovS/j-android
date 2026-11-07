@@ -1,6 +1,8 @@
 package ru.nayanovaacademy.journal.data.sync
 
 import com.google.gson.annotations.SerializedName
+import ru.nayanovaacademy.journal.data.model.HomeworkContestTask
+import ru.nayanovaacademy.journal.data.model.HomeworkQuiz
 
 /** Payload'ы очереди синхронизации — типизированные, чтобы при воспроизведении
  *  типы (Int вместо Double и т.п.) не искажались при перепрохождении через Gson. */
@@ -69,7 +71,9 @@ data class SaveHomeworkPayload(
     val lessonId: Int,
     val title: String,
     val description: String,
-    @SerializedName("due_date") val dueDate: String
+    @SerializedName("due_date") val dueDate: String,
+    val quizzes: List<HomeworkQuiz> = emptyList(),
+    @SerializedName("contest_tasks") val contestTasks: List<HomeworkContestTask> = emptyList()
 )
 
 data class DeleteHomeworkPayload(

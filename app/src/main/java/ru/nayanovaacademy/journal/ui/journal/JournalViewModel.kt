@@ -59,20 +59,97 @@ class JournalViewModel @Inject constructor(
     private val _saveMessage = MutableStateFlow<String?>(null)
     val saveMessage = _saveMessage.asStateFlow()
 
+    // Каталог требований ДЗ (квизы python-web + задачи contest-web)
+    private val _homeworkCatalog = MutableStateFlow<HomeworkCatalog?>(null)
+    val homeworkCatalog = _homeworkCatalog.asStateFlow()
+
+    private val _homeworkCatalogLoading = MutableStateFlow(false)
+    val homeworkCatalogLoading = _homeworkCatalogLoading.asStateFlow()
+
+    private val _homeworkCatalogError = MutableStateFlow<String?>(null)
+    val homeworkCatalogError = _homeworkCatalogError.asStateFlow()
+
+    // Предварительный расчёт оценок за прошлое ДЗ
+    private val _homeworkPreview = MutableStateFlow<HomeworkGradePreview?>(null)
+    val homeworkPreview = _homeworkPreview.asStateFlow()
+
+    private val _homeworkPreviewLoading = MutableStateFlow(false)
+    val homeworkPreviewLoading = _homeworkPreviewLoading.asStateFlow()
+
+    private val _homeworkPreviewError = MutableStateFlow<String?>(null)
+    val homeworkPreviewError = _homeworkPreviewError.asStateFlow()
+
     fun loadLesson(lessonId: Int) {
         currentLessonId = lessonId
+        _homeworkPreview.value = null
+        _homeworkPreviewError.value = null
+        _homeworkPreviewLoading.value = false
         viewModelScope.launch {
             _isLoading.value = true
             when (val result = repository.lessonDetail(lessonId)) {
                 is JournalRepository.Result.Success -> {
                     _detail.value = result.data
                     initLocalState(result.data)
+                    // Фоном считаем предварительную оценку за прошлое ДЗ,
+                    // если в нём выбраны квизы/задачи.
+                    val prev = result.data.previousHomework
+                    if (prev != null && prev.id > 0 &&
+                        (prev.quizzes.orEmpty().isNotEmpty() || prev.contestTasks.orEmpty().isNotEmpty())
+                    ) {
+                        loadHomeworkPreview(lessonId, prev.id)
+                    }
                 }
                 is JournalRepository.Result.Error -> {
                     _saveMessage.value = result.message
                 }
             }
             _isLoading.value = false
+        }
+    }
+
+    /** Каталог квизов и задач для диалога ДЗ. */
+    fun loadHomeworkCatalog(refresh: Boolean = false) {
+        viewModelScope.launch {
+            _homeworkCatalogLoading.value = true
+            _homeworkCatalogError.value = null
+            when (val result = repository.homeworkCatalog(refresh)) {
+                is JournalRepository.Result.Success -> {
+                    _homeworkCatalog.value = result.data
+                    _homeworkCatalogError.value = result.data.errors
+                        .takeIf { it.isNotEmpty() }
+                        ?.joinToString("\n")
+                }
+                is JournalRepository.Result.Error -> _homeworkCatalogError.value = result.message
+            }
+            _homeworkCatalogLoading.value = false
+        }
+    }
+
+    /** Предварительный расчёт оценок за ДЗ. */
+    fun loadHomeworkPreview(lessonId: Int, homeworkId: Int, refresh: Boolean = false) {
+        if (homeworkId <= 0) {
+            _homeworkPreviewError.value = "Домашнее задание ещё не синхронизировано"
+            return
+        }
+        viewModelScope.launch {
+            _homeworkPreviewLoading.value = true
+            _homeworkPreviewError.value = null
+            when (val result = repository.homeworkPreview(lessonId, homeworkId, refresh)) {
+                is JournalRepository.Result.Success -> {
+                    // Не применяем результат, если пользователь уже открыл другой урок.
+                    if (currentLessonId == lessonId) {
+                        _homeworkPreview.value = result.data
+                    }
+                }
+                is JournalRepository.Result.Error -> {
+                    if (currentLessonId == lessonId) {
+                        _homeworkPreviewError.value = result.message
+                    }
+                }
+            }
+            if (currentLessonId == lessonId) {
+                _homeworkPreviewLoading.value = false
+            }
         }
     }
 
@@ -322,11 +399,50 @@ class JournalViewModel @Inject constructor(
     }
 
     /** Сохранить домашнее задание урока (на следующий урок) и обновить данные. */
-    fun saveHomework(lessonId: Int, title: String, description: String, dueDate: String) {
+    fun saveHomework(
+        lessonId: Int,
+        title: String,
+        description: String,
+        dueDate: String,
+        quizzes: List<HomeworkQuiz> = emptyList(),
+        contestTasks: List<HomeworkContestTask> = emptyList()
+    ) {
         viewModelScope.launch {
-            when (val result = repository.saveHomework(lessonId, title, description, dueDate)) {
+            when (val result = repository.saveHomework(
+                lessonId, title, description, dueDate, quizzes, contestTasks
+            )) {
                 is JournalRepository.Result.Success -> {
                     _saveMessage.value = "Домашнее задание сохранено"
+                    loadLesson(lessonId)
+                }
+                is JournalRepository.Result.Error -> _saveMessage.value = result.message
+            }
+        }
+    }
+
+    /**
+     * Выставить предварительно рассчитанные оценки за ДЗ выбранным ученикам.
+     * Базовая оценка «ДЗ» заменяется, переписывания сохраняются; остальные
+     * типы работ не трогаются.
+     */
+    fun applyAutoHomeworkGrades(lessonId: Int, grades: Map<Int, Int>, comment: String) {
+        if (grades.isEmpty()) return
+        val current = _localMarks.value.toMutableMap()
+        for ((sid, value) in grades) {
+            if (value !in 2..5) continue
+            val existing = current[sid] ?: emptyList()
+            val kept = existing.filter { it.workType != HOMEWORK_TYPE || it.isRetake }
+            current[sid] = kept + LocalMark(value, HOMEWORK_TYPE, comment)
+        }
+        _localMarks.value = current
+        updateCurrentMarksLocally()
+        viewModelScope.launch {
+            val marksForApi = current.mapValues { (_, list) ->
+                list.map { MarkEntry(it.value, it.workType, it.comment, it.id, it.isRetake, it.attemptDate) }
+            }
+            when (val result = repository.saveMarks(lessonId, marksForApi, _removeMarkIds.value)) {
+                is JournalRepository.Result.Success -> {
+                    _saveMessage.value = "Оценки за ДЗ выставлены: ${grades.size}"
                     loadLesson(lessonId)
                 }
                 is JournalRepository.Result.Error -> _saveMessage.value = result.message

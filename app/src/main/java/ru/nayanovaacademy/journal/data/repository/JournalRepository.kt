@@ -305,7 +305,9 @@ class JournalRepository @Inject constructor(
         val prevHomework = prevDetail.homeworks.firstOrNull()
         return detail.copy(
             previousHomework = prevHomework,
-            previousLessonDate = prev.date
+            previousLessonDate = prev.date,
+            previousLessonId = prev.id,
+            previousAttendance = prevDetail.attendance
         )
     }
 
@@ -486,9 +488,16 @@ class JournalRepository @Inject constructor(
         }
     }
 
-    /** Домашнее задание урока (на следующий урок). */
-    suspend fun saveHomework(lessonId: Int, title: String, description: String, dueDate: String): Result<Boolean> {
-        val payload = SaveHomeworkPayload(lessonId, title, description, dueDate)
+    /** Домашнее задание урока (на следующий урок) с требованиями квизов/задач. */
+    suspend fun saveHomework(
+        lessonId: Int,
+        title: String,
+        description: String,
+        dueDate: String,
+        quizzes: List<HomeworkQuiz> = emptyList(),
+        contestTasks: List<HomeworkContestTask> = emptyList()
+    ): Result<Boolean> {
+        val payload = SaveHomeworkPayload(lessonId, title, description, dueDate, quizzes, contestTasks)
         val applyLocally: suspend () -> Result<Boolean> = {
             syncManager.applyHomework(lessonId, payload)
             syncManager.enqueueSaveHomework(payload)
@@ -500,6 +509,8 @@ class JournalRepository @Inject constructor(
                     put("title", title)
                     put("description", description)
                     put("due_date", dueDate)
+                    put("quizzes", quizzes)
+                    put("contest_tasks", contestTasks)
                 }
                 val response = api.homeworkSave(lessonId, body)
                 if (response.isSuccessful) {
@@ -513,6 +524,50 @@ class JournalRepository @Inject constructor(
             }
         } catch (e: Exception) {
             applyLocally()
+        }
+    }
+
+    /** Каталог квизов и задач для выбора требований ДЗ (только онлайн). */
+    suspend fun homeworkCatalog(refresh: Boolean = false): Result<HomeworkCatalog> {
+        return try {
+            if (!isOnline()) {
+                return Result.Error("Нет сети — каталог квизов и задач недоступен")
+            }
+            val response = api.homeworkCatalog(refresh)
+            val body = response.body()
+            if (response.isSuccessful && body != null) {
+                Result.Success(body)
+            } else {
+                Result.Error("Ошибка загрузки каталога", response.code())
+            }
+        } catch (e: Exception) {
+            Result.Error(e.message ?: "Ошибка сети")
+        }
+    }
+
+    /** Предварительный расчёт оценок за ДЗ (только онлайн). */
+    suspend fun homeworkPreview(
+        lessonId: Int,
+        homeworkId: Int,
+        refresh: Boolean = false
+    ): Result<HomeworkGradePreview> {
+        return try {
+            if (!isOnline()) {
+                return Result.Error("Нет сети — предварительная оценка недоступна")
+            }
+            val response = api.homeworkPreview(lessonId, homeworkId, refresh)
+            val body = response.body()
+            if (response.isSuccessful && body != null) {
+                if (body.errors.isNotEmpty() && body.students.isEmpty() && body.homework == null) {
+                    Result.Error(body.errors.first())
+                } else {
+                    Result.Success(body)
+                }
+            } else {
+                Result.Error("Ошибка расчёта предварительной оценки", response.code())
+            }
+        } catch (e: Exception) {
+            Result.Error(e.message ?: "Ошибка сети")
         }
     }
 

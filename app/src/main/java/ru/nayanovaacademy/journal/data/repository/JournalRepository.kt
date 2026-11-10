@@ -282,6 +282,10 @@ class JournalRepository @Inject constructor(
      * ближайшего предыдущего занятия из ОБОИХ предметов, а не только
      * того же предмета. Так задание, выданное на одном виде урока, показывается
      * на ближайшем следующем (сдача и оценка «ДЗ»).
+     *
+     * В подгруппах («7 А1», «7 А2») учитываются только уроки этой же
+     * подгруппы и основного класса: ДЗ соседней подгруппы не показывается,
+     * а задание, выданное всему классу, видно в каждой подгруппе.
      */
     private suspend fun enhanceHomeworkForGroup(detail: LessonDetail): LessonDetail {
         val lesson = detail.lesson
@@ -295,9 +299,20 @@ class JournalRepository @Inject constructor(
         // mergedLessons сортирует по убыванию (новые сверху): предыдущий урок — следующий в списке.
         val index = merged.indexOfFirst { it.id == lesson.id }
         if (index < 0 || index >= merged.lastIndex) return detail
-        val prev = merged[index + 1]
+
+        // Источники ДЗ: текущая подгруппа (или основной класс) и основной
+        // класс параллели. Соседние подгруппы сюда не входят.
+        val mainClassIds = group.members
+            .filterNot { SubjectMerge.isSubgroup(it.className) }
+            .map { it.classId }
+            .toSet()
+        val allowedClassIds = mainClassIds + lesson.classId
+        val prev = merged.drop(index + 1)
+            .firstOrNull { it.classId in allowedClassIds }
+            ?: return detail
+
         // Ближайший предыдущий урок того же предмета — сервер уже вернул его ДЗ.
-        if (prev.subjectId == lesson.subjectId) return detail
+        if (prev.classId == lesson.classId && prev.subjectId == lesson.subjectId) return detail
         val prevDetail = when (val r = fetchLessonDetail(prev.id)) {
             is Result.Success -> r.data
             is Result.Error -> return detail
